@@ -75,6 +75,20 @@ async def init_db():
         );
         """)
 
+                # Inicializar world
+        await conn.execute("""
+            INSERT INTO world (id, current_day, rules, hierarchy)
+            VALUES (1, 0, '', '{}'::jsonb)
+            ON CONFLICT (id) DO NOTHING
+        """)
+
+        # Inicializar POV
+        await conn.execute("""
+            INSERT INTO pov_state (id, current_character_id)
+            VALUES (1, NULL)
+            ON CONFLICT (id) DO NOTHING
+        """)
+
 # ---------- WORLD ----------
 
 async def get_world_state():
@@ -122,14 +136,27 @@ async def set_character_status(name, status):
 
 # ---------- DAILY LOGS ----------
 
-async def save_day(day, title, full_text, summary):
+async def save_day(title, full_text, summary):
     pool = await get_pool()
     async with pool.acquire() as conn:
+        day = await conn.fetchval(
+            "SELECT current_day FROM world WHERE id = 1"
+        )
+
+        new_day = day + 1
+
         await conn.execute("""
             INSERT INTO daily_logs (day, title, full_text, summary)
             VALUES ($1, $2, $3, $4)
-            ON CONFLICT (day) DO NOTHING
-        """, day, title, full_text, summary)
+        """, new_day, title, full_text, summary)
+
+        await conn.execute(
+            "UPDATE world SET current_day = $1 WHERE id = 1",
+            new_day
+        )
+
+    return new_day
+
 
 # ---------- ARCS ----------
 
@@ -156,6 +183,35 @@ async def get_current_pov():
             WHERE p.id = 1
         """)
         return row["name"] if row else None
+    
+# ---------- SET POV ----------
+
+async def set_pov(name: str | None):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if name is None:
+            await conn.execute(
+                "UPDATE pov_state SET current_character_id = NULL WHERE id = 1"
+            )
+            return
+
+        row = await conn.fetchrow(
+            "SELECT id FROM characters WHERE name = $1",
+            name
+        )
+
+        if not row:
+            return False
+
+        await conn.execute("""
+            INSERT INTO pov_state (id, current_character_id)
+            VALUES (1, $1)
+            ON CONFLICT (id)
+            DO UPDATE SET current_character_id = $1
+        """, row["id"])
+
+    return True
+
 
 # ---------- VOTES ----------
 
