@@ -4,6 +4,7 @@ import aiosqlite
 from discord.ext import tasks
 from discord.ext import commands
 from dotenv import load_dotenv
+from db import get_pool
 from database import get_characters
 from database import init_db
 from database import get_active_arcs
@@ -147,6 +148,15 @@ async def pov(ctx):
         await ctx.send(f"👁️ POV actual: **{pov}**")
     else:
         await ctx.send("👁️ POV actual: Narrador omnisciente")
+
+@bot.command()
+async def dbtest(ctx):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        day = await conn.fetchval(
+            "SELECT current_day FROM world WHERE id = 1"
+        )
+    await ctx.send(f"✅ PostgreSQL conectado correctamente. Día actual: {day}")
 
 @bot.command()
 @commands.has_permissions(administrator=True)
