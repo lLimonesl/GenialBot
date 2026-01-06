@@ -185,3 +185,49 @@ async def get_closed_votes(limit=3):
             LIMIT $1
         """, limit)
         return rows
+
+# ---------- MUERTE PERMANENTE ----------
+
+async def kill_character(name: str, cause: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # Obtener id del personaje
+        row = await conn.fetchrow(
+            "SELECT id FROM characters WHERE name = $1",
+            name
+        )
+
+        if not row:
+            return False  # personaje no existe
+
+        character_id = row["id"]
+
+        # Marcar como muerto
+        await conn.execute(
+            "UPDATE characters SET status = 'Muerto' WHERE id = $1",
+            character_id
+        )
+
+        # Cerrar arcos activos
+        await conn.execute(
+            "UPDATE character_arcs SET arc_status = 'closed' WHERE character_id = $1",
+            character_id
+        )
+
+        # Registrar evento en el día actual
+        day = await conn.fetchval(
+            "SELECT current_day FROM world WHERE id = 1"
+        )
+
+        await conn.execute("""
+            INSERT INTO daily_logs (day, title, full_text, summary)
+            VALUES ($1, $2, $3, $4)
+            ON CONFLICT (day) DO NOTHING
+        """,
+            day,
+            "Muerte de un Campeón",
+            f"{name} ha muerto definitivamente. Causa: {cause}",
+            f"Muerte permanente de {name}"
+        )
+
+    return True

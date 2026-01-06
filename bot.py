@@ -85,8 +85,11 @@ async def personajes(ctx):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def matar(ctx, nombre: str, *, causa="Destino del mundo"):
-    await kill_character(nombre, causa)
-    await ctx.send(f"☠️ **{nombre} ha muerto definitivamente.**\nCausa: {causa}")
+    ok = await kill_character(nombre, causa)
+    if ok:
+        await ctx.send(f"☠️ **{nombre} ha muerto definitivamente.**\nCausa: {causa}")
+    else:
+        await ctx.send("❌ Personaje no encontrado.")
 
 @bot.command()
 async def arcos(ctx):
