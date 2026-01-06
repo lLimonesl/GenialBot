@@ -1,19 +1,18 @@
 import os
 import discord
-import aiosqlite
-from discord.ext import tasks
-from discord.ext import commands
+from discord.ext import commands, tasks
+from database import init_db, save_day
+from story_engine import generate_next_day
 from dotenv import load_dotenv
 from db import get_pool
 from database import get_characters
 from database import init_db
 from database import get_active_arcs
 from database import kill_character
-from database import create_vote
+from database import create_vote, get_current_day
 from database import close_vote
 from database import get_current_pov
 from database import set_pov
-from story_engine import generate_next_day
 from database import save_day
 
 # Cargar variables de entorno
@@ -41,10 +40,9 @@ def split_message(text, limit=1900):
 @bot.event
 async def on_ready():
     await init_db()
-    print(f"Bot conectado como {bot.user}")
-
     if not daily_story_task.is_running():
         daily_story_task.start()
+    print(f"Bot conectado como {bot.user}")
 
 @tasks.loop(hours=24)
 async def daily_story_task():
@@ -117,14 +115,11 @@ async def votar(ctx, *, pregunta_opciones: str):
     question = parts[0]
     options = parts[1:]
 
-    async with aiosqlite.connect("isekai.db") as db:
-        cur = await db.execute("SELECT current_day FROM world")
-        day = (await cur.fetchone())[0]
-
+    day = await get_current_day()
     await create_vote(day, question, options)
 
-    msg = f"🗳️ **VOTACIÓN ABIERTA**\n{question}\n"
     emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    msg = f"🗳️ **VOTACIÓN ABIERTA (Día {day})**\n{question}\n"
 
     for i, opt in enumerate(options):
         msg += f"{emojis[i]} {opt}\n"
@@ -133,7 +128,6 @@ async def votar(ctx, *, pregunta_opciones: str):
 
     for i in range(len(options)):
         await poll.add_reaction(emojis[i])
-
 
 @bot.command()
 @commands.has_permissions(administrator=True)
