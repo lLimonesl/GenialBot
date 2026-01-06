@@ -231,3 +231,15 @@ async def kill_character(name: str, cause: str):
         )
 
     return True
+
+# ---------- CERRAR VOTACIÓN ----------
+
+async def close_vote(vote_id: int, result: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE votes
+            SET result = $1,
+                status = 'closed'
+            WHERE id = $2
+        """, result, vote_id)
