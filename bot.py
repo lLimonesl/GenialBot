@@ -19,6 +19,7 @@ from database import reset_world_progress
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))
 
 # Intents necesarios
 intents = discord.Intents.default()
