@@ -86,7 +86,9 @@ Pregunta:
 ¿Existe una decisión crítica que deba ser tomada por el público?
 
 Reglas:
-- Responde SI siempre que exista cualquier decisión relevante.
+- Solo responde SI o NO.
+- Si NO, responde exactamente: NO
+- Si SI, responde en JSON con este formato:
 
 {{
   "question": "...",
