@@ -14,6 +14,7 @@ from database import get_current_pov
 from database import set_pov
 from database import save_day
 from database import reset_world_progress
+from pdf_exporter import export_day_to_pdf
 
 # Cargar variables de entorno
 load_dotenv()
@@ -98,20 +99,31 @@ async def on_ready():
 
 @tasks.loop(hours=24)
 async def daily_story_task():
-    texto = await generate_next_day()
+    texto, title = await generate_next_day()
 
-    # enviar historia (ya tienes el split)
-    await send_long_message(CHANNEL_ID, texto)
+    # Enviar historia
+    await send_long_message(CHANNEL_ID, f"**{title}**\n{texto}")
 
+    # Día actual
+    day = await get_current_day()
+
+    # Exportar PDF
+    from pdf_exporter import export_day_to_pdf
+    pdf_path = export_day_to_pdf(day, title, texto)
+
+    channel = bot.get_channel(CHANNEL_ID)
+
+    # Enviar PDF
+    await channel.send(
+        content=f"📄 **Archivo del Día {day}**",
+        file=discord.File(pdf_path)
+    )
+
+    # Detectar votación automática
     decision = await detect_critical_decision(texto)
 
     if decision:
-        day = await get_current_day()
-        await create_vote(
-            day,
-            decision["question"],
-            decision["options"]
-        )
+        await create_vote(day, decision["question"], decision["options"])
 
         msg = f"🗳️ **DECISIÓN CRÍTICA (Día {day})**\n"
         msg += decision["question"] + "\n"
@@ -120,10 +132,11 @@ async def daily_story_task():
         for i, opt in enumerate(decision["options"]):
             msg += f"{emojis[i]} {opt}\n"
 
-        poll = await bot.get_channel(CHANNEL_ID).send(msg)
+        poll = await channel.send(msg)
 
         for i in range(len(decision["options"])):
             await poll.add_reaction(emojis[i])
+
 
 # Comando de prueba
 @bot.command()
@@ -236,22 +249,23 @@ async def resetear_mundo(ctx):
 
 @bot.command()
 async def generar_dia(ctx):
-    texto = await generate_next_day()
+    texto, title = await generate_next_day()
 
-    lines = texto.split("\n", 1)
-    title = lines[0].strip()
-    summary = texto[:200]
+    # Enviar historia (maneja +2000 chars)
+    await send_long_message(CHANNEL_ID, f"**{title}**\n{texto}")
 
-    new_day = await save_day(
-        full_text=texto,
-        summary=summary,
-        title=title
+    # Obtener día actual (ya incrementado)
+    day = await get_current_day()
+
+    # Exportar a PDF
+    from pdf_exporter import export_day_to_pdf
+    pdf_path = export_day_to_pdf(day, title, texto)
+
+    # Enviar PDF
+    await ctx.send(
+        content=f"📄 **Archivo del Día {day}**",
+        file=discord.File(pdf_path)
     )
 
-    header = f"**Día {new_day}: {title}**\n"
-    chunks = split_message(header + texto)
-
-    for part in chunks:
-        await ctx.send(part)
 
 bot.run(TOKEN)

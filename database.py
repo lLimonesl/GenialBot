@@ -118,6 +118,41 @@ async def get_characters():
             WHERE status != 'Muerto'
         """)
         return rows
+    
+async def get_full_characters():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT
+                name,
+                race,
+                status,
+                weapon,
+                amulet,
+                pet,
+                abilities,
+                passives,
+                final_move
+            FROM characters
+            WHERE status != 'Muerto'
+        """)
+
+async def apply_level_ups(level_ups):
+    """
+    level_ups = [(name, amount), ...]
+    """
+    if not level_ups:
+        return
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        for name, amount in level_ups:
+            await conn.execute("""
+                UPDATE characters
+                SET level = level + $1
+                WHERE name = $2
+            """, amount, name)
+
 
 async def get_character_by_name(name):
     pool = await get_pool()
