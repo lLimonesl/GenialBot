@@ -69,5 +69,49 @@ Las consecuencias son permanentes.
     )
 
     text = response.choices[0].message.content
-    await increment_day()
     return text
+
+async def detect_critical_decision(text: str):
+    """
+    Devuelve None si no hay punto crítico,
+    o un dict con pregunta y opciones si sí lo hay.
+    """
+    prompt = f"""
+Analiza el siguiente texto narrativo.
+
+TEXTO:
+{text}
+
+Pregunta:
+¿Existe una decisión crítica que deba ser tomada por el público?
+
+Reglas:
+- Solo responde SI o NO.
+- Si NO, responde exactamente: NO
+- Si SI, responde en JSON con este formato:
+
+{{
+  "question": "...",
+  "options": ["opción 1", "opción 2", "opción 3"]
+}}
+
+No inventes decisiones irrelevantes.
+No propongas decisiones que contradigan reglas canónicas.
+"""
+
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.3
+    )
+
+    content = response.choices[0].message.content.strip()
+
+    if content == "NO":
+        return None
+
+    try:
+        import json
+        return json.loads(content)
+    except Exception:
+        return None

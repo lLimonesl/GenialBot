@@ -3,49 +3,63 @@ import json
 from db import get_pool
 
 WORLD_RULES = """
-REENCARNACIÓN
-Los protagonistas reencarnan desde nuestro mundo a un mundo mágico medieval de fantasía poco próspero.
-Existen dioses del mundo original que observan y permiten la reencarnación.
+REENCARNACIÓN Y MEMORIA
+Los protagonistas reencarnan desde su mundo original a un mundo mágico medieval de fantasía poco próspero.
+Todos conservan íntegramente sus recuerdos, conocimientos, personalidad, vínculos emocionales
+y relaciones del mundo anterior. No existe amnesia parcial ni total.
+
+RELACIONES CANÓNICAS
+Existen relaciones sentimentales establecidas desde antes de la reencarnación.
+Estas relaciones son permanentes y deben respetarse estrictamente.
+La narración NO debe crear romances, coqueteos ni vínculos amorosos que contradigan estas reglas.
+
+Parejas confirmadas:
+- Tey y Gray son pareja estable.
+- Wenn tiene pareja en su mundo original. Dicha pareja no se encuentra en el isekai.
+  Wenn no puede enamorarse ni desarrollar vínculos románticos con nadie más.
 
 CONDICIÓN INICIAL
 Cada protagonista aparece solo, en un reino correspondiente a su raza.
 Cada uno es designado campeón de su reino y recibe apoyo total del mismo.
-Cada combate importante transporta automáticamente a los campeones a la zona designada.
+En cada combate importante, los campeones son transportados automáticamente a la zona designada.
 
 CONFLICTO CENTRAL
-Los protagonistas deben competir contra leyendas de otro mundo por los recursos del mundo.
+Los protagonistas compiten contra leyendas de otro mundo por los recursos del mundo.
 Las leyendas NO son reencarnados.
-Los reinos son pacíficos entre sí, no existen guerras internas.
+Los reinos son pacíficos entre sí; no existen guerras internas.
 
 ESCALA DE PODER
-El más débil de los protagonistas es tan fuerte como 3 caballeros de élite.
+El más débil de los protagonistas es tan fuerte como tres caballeros de élite.
 Existen muchos caballeros de élite.
 Los enemigos comunes tienen un nivel equivalente a un Kulu-Ya-Ku de Monster Hunter.
 
 MAGIA
 La magia funciona mediante la imaginación.
-Cada energía debe ser comprendida para poder usarse correctamente.
+Cada tipo de energía debe ser comprendido para poder utilizarse correctamente.
 
 IDIOMAS
-Cada raza tiene su propio idioma.
+Cada raza posee su propio idioma.
 Todos recuerdan su idioma natal (español).
 Algunos amuletos permiten traducción universal.
 
 SOCIEDAD
-La belleza promedio del mundo es considerada fea en nuestro mundo.
+La belleza promedio del mundo es considerada fea en el mundo original.
 La inteligencia promedio de la población es baja.
 Las leyes son estrictas y universales.
 La esclavitud es legal, costosa y regulada.
 
 NIVELES
 El límite inicial de nivel es 100.
-Para superar el nivel 100, y cada 10 niveles posteriores, se debe cumplir un requisito especial.
+Para superar el nivel 100 y cada 10 niveles posteriores,
+se debe cumplir un requisito especial.
 
 MARCAS
-Todos los campeones tienen una marca inconfundible en la mano que los identifica.
+Todos los campeones poseen una marca inconfundible en la mano
+que los identifica como héroes reencarnados.
 
 APARICIÓN
-Los campeones aparecen aleatoriamente dentro de los reinos correspondientes a su raza.
+Los campeones aparecen aleatoriamente dentro de los reinos
+correspondientes a su raza.
 """
 
 SOCIAL_HIERARCHY = {
@@ -70,7 +84,9 @@ WORLD_META = {
     "elite_knight_power_ratio": 3,
     "enemy_baseline": "Kulu-Ya-Ku",
     "hero_mark": True,
-    "languages_per_race": True
+    "languages_per_race": True,
+    "memory_from_previous_world": True,
+    "fixed_romantic_relationships": True
 }
 
 async def main():
@@ -88,6 +104,6 @@ async def main():
         json.dumps(WORLD_META)
         )
 
-    print("🌍 Mundo cargado correctamente.")
+    print("🌍 Mundo actualizado con memoria y relaciones canónicas.")
 
 asyncio.run(main())

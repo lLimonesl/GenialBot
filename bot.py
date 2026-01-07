@@ -2,18 +2,18 @@ import os
 import discord
 from discord.ext import commands, tasks
 from database import init_db, save_day
-from story_engine import generate_next_day
+from story_engine import generate_next_day, detect_critical_decision
 from dotenv import load_dotenv
 from db import get_pool
 from database import get_characters
-from database import init_db
 from database import get_active_arcs
 from database import kill_character
 from database import create_vote, get_current_day
-from database import close_vote
+from database import get_open_votes_older_than, close_vote
 from database import get_current_pov
 from database import set_pov
 from database import save_day
+from database import reset_world_progress
 
 # Cargar variables de entorno
 load_dotenv()
@@ -37,39 +37,83 @@ def split_message(text, limit=1900):
     parts.append(text)
     return parts
 
+async def count_reactions(message):
+    results = {}
+    for reaction in message.reactions:
+        if reaction.emoji in ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]:
+            results[str(reaction.emoji)] = reaction.count - 1
+    return results
+
+@tasks.loop(minutes=30)
+async def close_votes_task():
+    votes = await get_open_votes_older_than(15)
+
+    if not votes:
+        return
+
+    channel = bot.get_channel(CHANNEL_ID)
+    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
+
+    for vote in votes:
+        async for message in channel.history(limit=50):
+            if vote["question"] in message.content:
+                counts = await count_reactions(message)
+
+                if not counts:
+                    result = "Sin votos"
+                else:
+                    winner = max(counts, key=counts.get)
+                    index = emojis.index(winner)
+                    result = vote["options"][index]
+
+                await close_vote(vote["id"], result)
+
+                await channel.send(
+                    f"🗳️ **VOTACIÓN CERRADA**\n"
+                    f"Pregunta: {vote['question']}\n"
+                    f"Resultado: **{result}**"
+                )
+
 @bot.event
 async def on_ready():
     await init_db()
+
     if not daily_story_task.is_running():
         daily_story_task.start()
+
+    if not close_votes_task.is_running():
+        close_votes_task.start()
+
     print(f"Bot conectado como {bot.user}")
 
 @tasks.loop(hours=24)
 async def daily_story_task():
-    channel_id = int(os.getenv("STORY_CHANNEL_ID"))
-    channel = bot.get_channel(channel_id)
-
-    if channel is None:
-        print("Canal no encontrado")
-        return
-
     texto = await generate_next_day()
 
-    lines = texto.split("\n", 1)
-    title = lines[0].strip()
-    summary = texto[:200]
+    # enviar historia (ya tienes el split)
+    await send_long_message(CHANNEL_ID, texto)
 
-    new_day = await save_day(
-        full_text=texto,
-        summary=summary,
-        title=title
-    )
+    decision = await detect_critical_decision(texto)
 
-    header = f"**Día {new_day}: {title}**\n"
-    chunks = split_message(header + texto)
+    if decision:
+        day = await get_current_day()
+        await create_vote(
+            day,
+            decision["question"],
+            decision["options"]
+        )
 
-    for part in chunks:
-        await channel.send(part)
+        msg = f"🗳️ **DECISIÓN CRÍTICA (Día {day})**\n"
+        msg += decision["question"] + "\n"
+
+        emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
+        for i, opt in enumerate(decision["options"]):
+            msg += f"{emojis[i]} {opt}\n"
+
+        poll = await bot.get_channel(CHANNEL_ID).send(msg)
+
+        for i in range(len(decision["options"])):
+            await poll.add_reaction(emojis[i])
 
 # Comando de prueba
 @bot.command()
@@ -166,6 +210,19 @@ async def setpov(ctx, nombre: str):
 async def clearpov(ctx):
     await set_pov(None)
     await ctx.send("👁️ POV restablecido a narrador omnisciente")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def resetear_mundo(ctx):
+    await reset_world_progress()
+    await ctx.send(
+        "🔄 **MUNDO REINICIADO**\n"
+        "• Día vuelto a 0\n"
+        "• Historia borrada\n"
+        "• Votaciones borradas\n"
+        "• POV reiniciado\n"
+        "Los personajes y reglas permanecen intactos."
+    )
 
 @bot.command()
 async def generar_dia(ctx):

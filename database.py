@@ -64,7 +64,8 @@ async def init_db():
             question TEXT,
             options JSONB,
             result TEXT,
-            status TEXT
+            status TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
         );
         """)
 
@@ -299,3 +300,36 @@ async def close_vote(vote_id: int, result: str):
                 status = 'closed'
             WHERE id = $2
         """, result, vote_id)
+
+# ---------- VOTACIONES ABIERTAS ----------
+
+async def get_open_votes_older_than(hours: int):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT id, question, options
+            FROM votes
+            WHERE status = 'open'
+              AND created_at <= NOW() - ($1 || ' hours')::interval
+        """, hours)
+
+# ---------- RESET GLOBAL ----------
+
+async def reset_world_progress():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM daily_logs")
+        await conn.execute("DELETE FROM votes")
+        await conn.execute("DELETE FROM character_arcs")
+
+        await conn.execute("""
+            UPDATE world
+            SET current_day = 0
+            WHERE id = 1
+        """)
+
+        await conn.execute("""
+            UPDATE pov_state
+            SET current_character_id = NULL
+            WHERE id = 1
+        """)
