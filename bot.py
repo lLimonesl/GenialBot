@@ -26,6 +26,15 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
+async def send_long_message(channel_id, text):
+    channel = bot.get_channel(channel_id)
+    if not channel:
+        return
+
+    max_length = 2000
+    for i in range(0, len(text), max_length):
+        await channel.send(text[i:i + max_length])
+
 def split_message(text, limit=1900):
     parts = []
     while len(text) > limit:
