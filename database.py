@@ -216,13 +216,18 @@ async def set_pov(name: str | None):
 
 # ---------- VOTES ----------
 
-async def create_vote(day, question, options):
+async def create_vote(day, question, options, source="ai"):
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute("""
-            INSERT INTO votes (day, question, options, status)
-            VALUES ($1, $2, $3, 'open')
-        """, day, question, options)
+            INSERT INTO votes (day, question, options, status, source)
+            VALUES ($1, $2, $3::jsonb, 'open', $4)
+        """,
+        day,
+        question,
+        json.dumps(options),
+        source
+        )
 
 async def get_current_day():
     pool = await get_pool()
