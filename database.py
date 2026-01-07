@@ -310,7 +310,7 @@ async def get_open_votes_older_than(hours: int):
             SELECT id, question, options
             FROM votes
             WHERE status = 'open'
-              AND created_at <= NOW() - ($1 || ' hours')::interval
+              AND created_at <= NOW() - ($1 * INTERVAL '1 hour')
         """, hours)
 
 # ---------- RESET GLOBAL ----------
