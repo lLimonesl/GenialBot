@@ -30,22 +30,138 @@ def page(title, body):
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{html.escape(title)}</title>
   <style>
-    body {{ margin: 0; font-family: Arial, sans-serif; background: #10141f; color: #edf2f7; }}
-    header {{ padding: 24px; background: #171d2b; border-bottom: 1px solid #2b3348; }}
-    main {{ max-width: 1000px; margin: 0 auto; padding: 24px; }}
-    a {{ color: #8bd3ff; }}
-    .card {{ background: #171d2b; border: 1px solid #2b3348; padding: 18px; margin: 14px 0; border-radius: 10px; }}
-    .muted {{ color: #aab4c3; }}
-    nav a {{ margin-right: 12px; }}
-    pre {{ white-space: pre-wrap; font-family: inherit; line-height: 1.55; }}
+    :root {{
+      color-scheme: dark;
+      --bg: #090b13;
+      --panel: rgba(18, 24, 39, 0.82);
+      --panel-strong: rgba(27, 36, 58, 0.9);
+      --border: rgba(148, 163, 184, 0.18);
+      --text: #f8fafc;
+      --muted: #a8b3c7;
+      --accent: #7dd3fc;
+      --accent-strong: #c084fc;
+      --gold: #facc15;
+      --shadow: 0 24px 80px rgba(0, 0, 0, 0.36);
+    }}
+    * {{ box-sizing: border-box; }}
+    body {{
+      margin: 0;
+      min-height: 100vh;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(125, 211, 252, 0.2), transparent 34rem),
+        radial-gradient(circle at top right, rgba(192, 132, 252, 0.2), transparent 30rem),
+        linear-gradient(135deg, #090b13 0%, #111827 48%, #050816 100%);
+      color: var(--text);
+    }}
+    body::before {{
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image: linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent 75%);
+    }}
+    header {{
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid var(--border);
+      background: rgba(9, 11, 19, 0.78);
+      backdrop-filter: blur(18px);
+    }}
+    .hero {{ max-width: 1120px; margin: 0 auto; padding: 28px 24px 20px; }}
+    .brand {{ display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }}
+    .mark {{
+      display: grid;
+      width: 46px;
+      height: 46px;
+      place-items: center;
+      border: 1px solid rgba(250, 204, 21, 0.35);
+      border-radius: 16px;
+      background: linear-gradient(135deg, rgba(250, 204, 21, 0.18), rgba(125, 211, 252, 0.16));
+      box-shadow: 0 0 30px rgba(250, 204, 21, 0.12);
+      font-size: 24px;
+    }}
+    h1, h2, h3, p {{ margin-top: 0; }}
+    h1 {{ margin-bottom: 2px; font-size: clamp(1.7rem, 4vw, 2.8rem); letter-spacing: -0.04em; }}
+    h2 {{ margin-bottom: 12px; font-size: clamp(1.55rem, 3vw, 2.35rem); letter-spacing: -0.035em; }}
+    h3 {{ margin-bottom: 8px; color: #e2e8f0; }}
+    .subtitle {{ margin: 0; color: var(--muted); }}
+    main {{ max-width: 1120px; margin: 0 auto; padding: 30px 24px 56px; }}
+    a {{ color: var(--accent); text-decoration: none; }}
+    a:hover {{ color: #bae6fd; }}
+    nav {{ display: flex; flex-wrap: wrap; gap: 10px; }}
+    nav a {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 36px;
+      padding: 8px 13px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.72);
+      color: #dbeafe;
+      font-size: 0.92rem;
+      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    }}
+    nav a:hover {{
+      transform: translateY(-1px);
+      border-color: rgba(125, 211, 252, 0.5);
+      background: rgba(14, 165, 233, 0.14);
+    }}
+    .card {{
+      position: relative;
+      overflow: hidden;
+      background: linear-gradient(145deg, var(--panel), rgba(15, 23, 42, 0.68));
+      border: 1px solid var(--border);
+      padding: 22px;
+      margin: 16px 0;
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+    }}
+    .card::after {{
+      content: "";
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      background: linear-gradient(120deg, rgba(255,255,255,0.09), transparent 30%);
+      opacity: 0.42;
+    }}
+    .card > * {{ position: relative; z-index: 1; }}
+    .muted {{ color: var(--muted); }}
+    pre {{
+      white-space: pre-wrap;
+      font-family: inherit;
+      line-height: 1.7;
+      margin: 0;
+      color: #e5edf8;
+    }}
+    strong {{ color: #ffffff; }}
+    @media (max-width: 720px) {{
+      .hero {{ padding: 22px 16px 16px; }}
+      main {{ padding: 22px 16px 42px; }}
+      .brand {{ align-items: flex-start; }}
+      nav {{ gap: 8px; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; }}
+      nav a {{ white-space: nowrap; }}
+      .card {{ padding: 18px; border-radius: 18px; }}
+    }}
   </style>
 </head>
 <body>
   <header>
-    <h1>GenialBot</h1>
-    <nav>
-      <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/comercio">Comercio</a><a href="/novel">Novel</a>
-    </nav>
+    <div class="hero">
+      <div class="brand">
+        <div class="mark">G</div>
+        <div>
+          <h1>GenialBot</h1>
+          <p class="subtitle">Crónica viva del isekai, personajes, eventos y ranking de poder.</p>
+        </div>
+      </div>
+      <nav>
+        <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/comercio">Comercio</a><a href="/novel">Novel</a>
+      </nav>
+    </div>
   </header>
   <main>{body}</main>
 </body>
