@@ -56,6 +56,7 @@ METADATA_TAGS = (
 METADATA_LINE_RE = re.compile(
     rf"^\s*(?:[-*>`]+\s*)?\[({'|'.join(METADATA_TAGS)})\]\s*(.*)$"
 )
+LEVEL_UP_RE = re.compile(r"^\s*(?:[-*>`]+\s*)?\[LEVEL_UP\]\s*(.+?)\s*\+(\d+)(?:\s+niveles?)?\s*$", re.IGNORECASE)
 
 PROMPT_LEAK_HEADINGS = (
     "REGLAS DEL MUNDO:",
@@ -86,6 +87,8 @@ async def generate_next_day():
     consequences = await get_vote_consequences(limit=5)
     season = await get_season_context()
     trades = await get_recent_trades(limit=5)
+    recent_days = await get_recent_full_days(limit=5)
+    recent_focus = extract_recent_character_focus(recent_days, characters)
 
     char_text = "\n".join(
         f"""
@@ -185,11 +188,18 @@ NPCS ACTIVOS:
 DECISIONES DEL PUBLICO:
 {vote_text}
 
+FOCO NARRATIVO RECIENTE:
+{recent_focus or 'Sin foco reciente detectado.'}
+
 Narrador omnisciente.
 
 Escribe el Día {current_day + 1}.
 No repitas eventos.
 Las consecuencias son permanentes.
+Reparte el protagonismo entre 3 a 5 personajes vivos.
+Evita centrar el día en personajes que ya dominaron el foco reciente, salvo que sea inevitable por una consecuencia directa.
+Incluye al menos una escena breve de otro grupo o personaje secundario para mantener el mundo vivo.
+Las citas memorables deben variar de personaje; evita asignarlas al mismo personaje dominante del foco reciente si otro personaje tuvo una escena fuerte.
 No copies ni resumas las secciones de contexto del prompt.
 No incluyas encabezados como PERSONAJES VIVOS, REGLAS DE PODER, INVENTARIO ACTUAL, NPCS ACTIVOS o DECISIONES DEL PUBLICO en la respuesta final.
 La respuesta final debe contener solo la narración del día y, al final, los metadatos con tags si aplican.
@@ -199,6 +209,9 @@ Si ocurre algo relevante, añade al final del texto líneas con estos formatos e
 No uses estos tags dentro de la narración normal.
 - Si un personaje obtiene, compra, encuentra, fabrica, equipa o pierde un objeto relevante, DEBES registrar el cambio con [ITEM_GAIN] o [ITEM_LOSE].
 - No inventes recompensas sin causa narrativa; solo registra objetos cuando realmente ocurran en la historia.
+- Si narras una pelea, duelo, emboscada, combate, batalla o enfrentamiento físico/mágico, DEBES añadir una línea [BATTLE].
+- Si un personaje aprende, mejora, supera un límite, gana experiencia importante o progresa por combate/entrenamiento, DEBES añadir [LEVEL_UP].
+- Si una batalla cambia el equilibrio del mundo, deja heridos importantes, revela un enemigo o altera un reino, DEBES añadir también [KEY_EVENT].
 - [WEATHER] clima del día
 - [QUOTE] Personaje: "frase memorable"
 - [ITEM_GAIN] Personaje|Objeto|Tipo|Descripción
@@ -210,6 +223,7 @@ No uses estos tags dentro de la narración normal.
 - [NPC_APPEAR] Nombre|Raza|Rol|Reino o ubicación|Descripción
 - [NPC_DISAPPEAR] Nombre
 - [BATTLE] participantes separados por coma|enemigos separados por coma|resultado|resumen breve
+- [LEVEL_UP] Personaje +1 niveles
 - [KEY_EVENT] tipo|título|descripción
 """
 
@@ -230,6 +244,7 @@ No uses estos tags dentro de la narración normal.
     clean_text = strip_metadata_tags(text)
 
     level_ups = extract_level_ups(text)
+    metadata, level_ups = await repair_combat_metadata(clean_text, metadata, level_ups)
     await apply_level_ups(level_ups)
 
     summary = build_summary(clean_text)
@@ -314,6 +329,23 @@ async def build_narrative_context():
 
     return "\n\n".join(sections) if sections else "Aún no hay historia previa registrada."
 
+def extract_recent_character_focus(recent_days, characters):
+    if not recent_days or not characters:
+        return ""
+
+    counts = {c["name"]: 0 for c in characters}
+    for day in recent_days:
+        text = f"{day['title'] or ''}\n{day['summary'] or ''}\n{day['full_text'] or ''}".lower()
+        for name in counts:
+            counts[name] += text.count(name.lower())
+
+    focused = [
+        f"{name} ({count} menciones recientes)"
+        for name, count in sorted(counts.items(), key=lambda item: item[1], reverse=True)
+        if count > 0
+    ][:5]
+    return ", ".join(focused)
+
 async def compress_week(day: int):
     memory = await get_narrative_memory()
     start = day - 6
@@ -339,6 +371,53 @@ async def summarize_memory(content: str, instruction: str):
         temperature=0.2
     )
     return response.choices[0].message.content.strip()
+
+async def repair_combat_metadata(text: str, metadata: dict, level_ups: list):
+    combat_words = ("batalla", "combate", "duelo", "emboscada", "pelea", "enfrentamiento", "atac", "golpe", "herid")
+    progress_words = ("aprend", "mejor", "progres", "super", "subió de nivel", "subio de nivel", "entren")
+    lower_text = text.lower()
+
+    needs_battle = not metadata["battles"] and any(word in lower_text for word in combat_words)
+    needs_level = not level_ups and any(word in lower_text for word in progress_words)
+    if not needs_battle and not needs_level:
+        return metadata, level_ups
+
+    prompt = f"""
+Extrae metadatos faltantes de esta narración.
+
+NARRACIÓN:
+{text}
+
+Reglas:
+- Si hay batalla, pelea, duelo, emboscada o enfrentamiento, responde una línea [BATTLE].
+- Si un personaje claramente aprende, mejora, supera un límite o sube de nivel, responde una línea [LEVEL_UP].
+- No inventes eventos que no estén en la narración.
+- Si no hay nada que extraer, responde NO.
+
+Formatos exactos:
+[BATTLE] participantes separados por coma|enemigos separados por coma|resultado|resumen breve
+[LEVEL_UP] Personaje +1 niveles
+"""
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "Responde solo con líneas de metadatos válidas o NO."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0
+    )
+    content = response.choices[0].message.content.strip()
+    if content.upper() == "NO":
+        return metadata, level_ups
+
+    repaired = extract_metadata(content)
+    if not metadata["battles"]:
+        metadata["battles"] = repaired["battles"]
+
+    if not level_ups:
+        level_ups = extract_level_ups(content)
+
+    return metadata, level_ups
 
 async def suggest_abilities_for_level_up(character_name: str):
     character = await get_character_by_name(character_name)
@@ -398,18 +477,19 @@ async def detect_critical_decision(text: str):
     o un dict con pregunta y opciones si sí lo hay.
     """
     prompt = f"""
-Analiza el siguiente texto narrativo.
+Analiza el siguiente texto narrativo de una historia interactiva.
 
 TEXTO:
 {text}
 
 Pregunta:
-¿Existe una decisión crítica que deba ser tomada por el público?
+¿Hay una decisión interesante que pueda tomar el público para orientar el siguiente día?
 
 Reglas:
-- Solo responde SI o NO.
-- Si NO, responde exactamente: NO
-- Si SI, responde en JSON con este formato:
+- No esperes solo una crisis de vida o muerte; también sirven decisiones tácticas, exploración, alianzas, investigación, negociación o rumbo del grupo.
+- La decisión debe afectar el siguiente día o una consecuencia visible.
+- Si el texto no deja ninguna posibilidad útil, responde exactamente: NO
+- Si sí hay una decisión útil, responde solo en JSON con este formato:
 
 {{
   "question": "...",
@@ -418,22 +498,36 @@ Reglas:
 
 No inventes decisiones irrelevantes.
 No propongas decisiones que contradigan reglas canónicas.
+Las opciones deben ser concretas y accionables.
 """
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.3
+        messages=[
+            {"role": "system", "content": "Responde solo con JSON válido o NO."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.45
     )
 
     content = response.choices[0].message.content.strip()
 
-    if content == "NO":
+    if content.upper() == "NO":
         return None
 
     try:
         import json
-        return json.loads(content)
+        if content.startswith("```"):
+            content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content, flags=re.IGNORECASE).strip()
+        json_match = re.search(r"\{.*\}", content, flags=re.DOTALL)
+        if json_match:
+            content = json_match.group(0)
+        data = json.loads(content)
+        question = str(data.get("question") or "").strip()
+        options = [str(option).strip() for option in data.get("options", []) if str(option).strip()]
+        if not question or len(options) < 2:
+            return None
+        return {"question": question, "options": options[:4]}
     except Exception:
         return None
 
@@ -443,11 +537,12 @@ def extract_level_ups(text: str):
     Formato esperado:
     [LEVEL_UP] Nombre +X
     """
-    pattern = r"\[LEVEL_UP\]\s*(\w+)\s*\+(\d+)"
-    matches = re.findall(pattern, text)
-
     results = []
-    for name, amount in matches:
+    for line in text.splitlines():
+        match = LEVEL_UP_RE.match(line)
+        if not match:
+            continue
+        name, amount = match.groups()
         results.append((name, int(amount)))
 
     return results

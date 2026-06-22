@@ -422,7 +422,7 @@ async def apply_level_ups(level_ups):
             await conn.execute("""
                 UPDATE characters
                 SET level = level + $1
-                WHERE name = $2
+                WHERE name ILIKE $2
             """, amount, name)
 
 
