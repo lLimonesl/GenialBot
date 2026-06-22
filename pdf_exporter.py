@@ -42,7 +42,25 @@ def export_day_to_pdf(day: int, title: str, text: str) -> str:
 
 
 def sanitize_pdf_text(text: str) -> str:
-    return "".join(ch if ord(ch) <= 255 else "?" for ch in text)
+    replacements = {
+        "“": '"',
+        "”": '"',
+        "„": '"',
+        "‟": '"',
+        "‘": "'",
+        "’": "'",
+        "‚": "'",
+        "‛": "'",
+        "—": "-",
+        "–": "-",
+        "…": "...",
+        "•": "-",
+        "→": "->",
+        "←": "<-",
+        "×": "x",
+    }
+    normalized = "".join(replacements.get(ch, ch) for ch in text)
+    return "".join(ch if ord(ch) <= 255 else "" for ch in normalized)
 
 
 def wrap_pdf_line(line: str, limit: int):
