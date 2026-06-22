@@ -136,6 +136,8 @@ Las consecuencias son permanentes.
 FORMATO DE METADATOS:
 Si ocurre algo relevante, añade al final del texto líneas con estos formatos exactos.
 No uses estos tags dentro de la narración normal.
+- Si un personaje obtiene, compra, encuentra, fabrica, equipa o pierde un objeto relevante, DEBES registrar el cambio con [ITEM_GAIN] o [ITEM_LOSE].
+- No inventes recompensas sin causa narrativa; solo registra objetos cuando realmente ocurran en la historia.
 - [WEATHER] clima del día
 - [QUOTE] Personaje: "frase memorable"
 - [ITEM_GAIN] Personaje|Objeto|Tipo|Descripción

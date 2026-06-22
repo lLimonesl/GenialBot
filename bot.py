@@ -138,6 +138,30 @@ async def count_reactions(message):
             results[str(reaction.emoji)] = reaction.count - 1
     return results
 
+async def publish_critical_decision(channel, day, texto):
+    decision = await detect_critical_decision(texto)
+
+    if not decision:
+        return
+
+    options = decision.get("options", [])[:4]
+    if len(options) < 2:
+        return
+
+    await create_vote(day, decision["question"], options)
+
+    msg = f"🗳️ **DECISIÓN CRÍTICA (Día {day})**\n"
+    msg += decision["question"] + "\n"
+
+    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
+    for i, opt in enumerate(options):
+        msg += f"{emojis[i]} {opt}\n"
+
+    poll = await channel.send(msg)
+
+    for i in range(len(options)):
+        await poll.add_reaction(emojis[i])
+
 @tasks.loop(minutes=30)
 async def close_votes_task():
     votes = await get_open_votes_older_than(15)
@@ -202,23 +226,7 @@ async def daily_story_task():
         file=discord.File(pdf_path)
     )
 
-    # Detectar votación automática
-    decision = await detect_critical_decision(texto)
-
-    if decision:
-        await create_vote(day, decision["question"], decision["options"])
-
-        msg = f"🗳️ **DECISIÓN CRÍTICA (Día {day})**\n"
-        msg += decision["question"] + "\n"
-
-        emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
-        for i, opt in enumerate(decision["options"]):
-            msg += f"{emojis[i]} {opt}\n"
-
-        poll = await channel.send(msg)
-
-        for i in range(len(decision["options"])):
-            await poll.add_reaction(emojis[i])
+    await publish_critical_decision(channel, day, texto)
 
 
 # Comando de prueba
@@ -513,6 +521,10 @@ async def generar_dia(ctx):
         content=f"📄 **Archivo del Día {day}**",
         file=discord.File(pdf_path)
     )
+
+    channel = bot.get_channel(CHANNEL_ID)
+    if channel:
+        await publish_critical_decision(channel, day, texto)
 
 
 bot.run(TOKEN)
