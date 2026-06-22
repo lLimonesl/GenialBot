@@ -166,7 +166,7 @@ No uses estos tags dentro de la narración normal.
     for character_name, arc_name, amount in metadata["arc_progress"]:
         await update_arc_progress(character_name, arc_name, amount)
 
-    return clean_text, f"Día {new_day}"
+    return append_metadata_summary(clean_text, metadata), f"Día {new_day}"
 
 async def detect_critical_decision(text: str):
     """
@@ -240,6 +240,53 @@ def strip_metadata_tags(text: str):
         re.MULTILINE
     )
     return tag_pattern.sub("", text).strip()
+
+def append_metadata_summary(text: str, metadata: dict):
+    sections = []
+
+    if metadata["weather"]:
+        sections.append(f"☀️ **Clima:** {metadata['weather']}")
+
+    if metadata["locations"]:
+        lines = [f"• **{name}:** {location}" for name, location in metadata["locations"]]
+        sections.append("🗺️ **Ubicaciones actualizadas**\n" + "\n".join(lines))
+
+    if metadata["new_arcs"]:
+        lines = [f"• **{name}:** {arc} - {goal}" for name, arc, goal in metadata["new_arcs"]]
+        sections.append("📜 **Nuevos arcos**\n" + "\n".join(lines))
+
+    if metadata["arc_progress"]:
+        lines = [f"• **{name}:** {arc} +{amount}%" for name, arc, amount in metadata["arc_progress"]]
+        sections.append("📈 **Progreso de arcos**\n" + "\n".join(lines))
+
+    if metadata["item_gains"]:
+        lines = [f"• **{name}:** obtuvo {item} ({item_type})" for name, item, item_type, _ in metadata["item_gains"]]
+        sections.append("🎒 **Objetos obtenidos**\n" + "\n".join(lines))
+
+    if metadata["item_losses"]:
+        lines = [f"• **{name}:** perdió {item}" for name, item in metadata["item_losses"]]
+        sections.append("🧺 **Objetos perdidos**\n" + "\n".join(lines))
+
+    if metadata["reputation"]:
+        lines = [f"• **{name}:** {kingdom} {amount:+d} - {notes}" for name, kingdom, amount, notes in metadata["reputation"]]
+        sections.append("🏰 **Fama/Reputación**\n" + "\n".join(lines))
+
+    if metadata["quotes"]:
+        lines = [f"• **{name}:** \"{quote}\"" for name, quote in metadata["quotes"]]
+        sections.append("💬 **Citas memorables**\n" + "\n".join(lines))
+
+    if metadata["npcs_appear"]:
+        lines = [f"• **{name}:** {role} en {kingdom}" for name, _, role, kingdom, _ in metadata["npcs_appear"]]
+        sections.append("👥 **NPCs relevantes**\n" + "\n".join(lines))
+
+    if metadata["battles"]:
+        lines = [f"• **{outcome}:** {summary}" for _, _, outcome, summary in metadata["battles"]]
+        sections.append("⚔️ **Combates registrados**\n" + "\n".join(lines))
+
+    if not sections:
+        return text
+
+    return text + "\n\n━━━━━━━━━━━━━━━━━━━━\n📌 **Registro del día**\n" + "\n\n".join(sections)
 
 def extract_metadata(text: str):
     metadata = {

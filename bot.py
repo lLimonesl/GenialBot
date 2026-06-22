@@ -30,6 +30,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
+bot.remove_command("help")
 
 async def send_long_message(channel_id, text):
     channel = bot.get_channel(channel_id)
@@ -65,6 +66,44 @@ def format_json_value(value):
 async def send_split(ctx, text):
     for part in split_message(text):
         await ctx.send(part)
+
+async def send_commands_help(ctx):
+    msg = """
+**Comandos disponibles**
+
+**Historia**
+• `!generar_dia` - Genera manualmente el siguiente día
+• `!historial` - Muestra el día actual guardado
+• `!historial <día>` - Muestra un día específico
+• `!historial --personaje <nombre>` - Busca días donde aparece un personaje
+
+**Personajes**
+• `!personajes` - Lista personajes vivos
+• `!stats <personaje>` - Perfil, nivel, equipo, arcos, fama y combates
+• `!inventario <personaje>` - Inventario actual
+• `!mapa` - Ubicación actual de personajes
+• `!fama <personaje>` - Reputación por reino
+• `!pov` - Muestra el POV actual
+
+**Mundo**
+• `!arcos` - Arcos activos
+• `!citas [personaje]` - Citas memorables
+• `!npcs` - NPCs activos
+• `!npc <nombre>` - Detalle de un NPC
+• `!combates [personaje]` - Combates registrados
+
+**Votaciones**
+• `!votar pregunta|opción1|opción2|...` - Crea votación manual (admin)
+• `!cerrar_votacion <id> <resultado>` - Cierra una votación (admin)
+
+**Administración**
+• `!matar <nombre> [causa]` - Muerte permanente (admin)
+• `!setpov <nombre>` - Fija POV (admin)
+• `!clearpov` - Limpia POV (admin)
+• `!resetear_mundo` - Reinicia progreso narrativo (admin)
+• `!dbtest` - Prueba conexión PostgreSQL
+""".strip()
+    await send_split(ctx, msg)
 
 async def count_reactions(message):
     results = {}
@@ -160,6 +199,14 @@ async def daily_story_task():
 @bot.command()
 async def ping(ctx):
     await ctx.send("Pong! El narrador ha despertado.")
+
+@bot.command()
+async def comandos(ctx):
+    await send_commands_help(ctx)
+
+@bot.command(name="help")
+async def help_command(ctx):
+    await send_commands_help(ctx)
 
 @bot.command()
 async def personajes(ctx):
