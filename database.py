@@ -1136,18 +1136,22 @@ async def apply_unlocked_ability(vote_id: int, ability: str):
 async def reset_world_progress():
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute("DELETE FROM ability_unlock_votes")
-        await conn.execute("DELETE FROM daily_logs")
-        await conn.execute("DELETE FROM votes")
-        await conn.execute("DELETE FROM character_arcs")
-        await conn.execute("DELETE FROM quotes")
-        await conn.execute("DELETE FROM inventory")
-        await conn.execute("DELETE FROM reputation")
-        await conn.execute("DELETE FROM npcs")
-        await conn.execute("DELETE FROM battle_logs")
-        await conn.execute("DELETE FROM narrative_memory")
-        await conn.execute("DELETE FROM key_events")
-        await conn.execute("DELETE FROM trade_logs")
+        await conn.execute("""
+            TRUNCATE TABLE
+                ability_unlock_votes,
+                daily_logs,
+                votes,
+                character_arcs,
+                quotes,
+                inventory,
+                reputation,
+                npcs,
+                battle_logs,
+                narrative_memory,
+                key_events,
+                trade_logs
+            RESTART IDENTITY CASCADE
+        """)
 
         for character in CHARACTERS:
             await conn.execute("""
