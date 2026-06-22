@@ -538,13 +538,14 @@ TEXTO:
 {text}
 
 Pregunta:
-¿Hay una decisión interesante que pueda tomar el público para orientar el siguiente día?
+¿Hay una decisión crítica de vida o muerte que deba tomar el público?
 
 Reglas:
-- No esperes solo una crisis de vida o muerte; también sirven decisiones tácticas, exploración, alianzas, investigación, negociación o rumbo del grupo.
-- La decisión debe afectar el siguiente día o una consecuencia visible.
-- Si el texto no deja ninguna posibilidad útil, responde exactamente: NO
-- Si sí hay una decisión útil, responde solo en JSON con este formato:
+- Responde SI solo si uno o más personajes están en riesgo inmediato de morir, ser ejecutados, sacrificados, abandonados en una situación letal o sufrir una consecuencia irreversible equivalente.
+- No crees votaciones por exploración, alianzas, negociación, entrenamiento, rutas, estrategia general o decisiones tácticas menores.
+- La situación debe estar planteada al final del día o quedar claramente abierta para el siguiente día.
+- Si no hay peligro mortal inmediato o consecuencia irreversible, responde exactamente: NO
+- Si sí hay una decisión crítica, responde solo en JSON con este formato:
 
 {{
   "question": "...",
@@ -553,7 +554,7 @@ Reglas:
 
 No inventes decisiones irrelevantes.
 No propongas decisiones que contradigan reglas canónicas.
-Las opciones deben ser concretas y accionables.
+Las opciones deben ser concretas, urgentes y relacionadas con salvar, sacrificar, arriesgar o abandonar a alguien.
 """
 
     response = client.chat.completions.create(
@@ -562,7 +563,7 @@ Las opciones deben ser concretas y accionables.
             {"role": "system", "content": "Responde solo con JSON válido o NO."},
             {"role": "user", "content": prompt}
         ],
-        temperature=0.45
+        temperature=0.25
     )
 
     content = response.choices[0].message.content.strip()
