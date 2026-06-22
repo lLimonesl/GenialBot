@@ -33,9 +33,14 @@ async def init_db():
             current_day INTEGER NOT NULL,
             rules TEXT NOT NULL,
             hierarchy JSONB NOT NULL,
-            meta JSONB
+            meta JSONB,
+            season TEXT DEFAULT 'Primavera',
+            season_day INTEGER DEFAULT 0
         );
         """)
+
+        await conn.execute("ALTER TABLE world ADD COLUMN IF NOT EXISTS season TEXT DEFAULT 'Primavera'")
+        await conn.execute("ALTER TABLE world ADD COLUMN IF NOT EXISTS season_day INTEGER DEFAULT 0")
 
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS daily_logs (
@@ -78,6 +83,10 @@ async def init_db():
         await conn.execute("ALTER TABLE votes ADD COLUMN IF NOT EXISTS source TEXT")
         await conn.execute("ALTER TABLE votes ADD COLUMN IF NOT EXISTS message_id BIGINT")
         await conn.execute("ALTER TABLE votes ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()")
+        await conn.execute("ALTER TABLE votes ADD COLUMN IF NOT EXISTS consequence TEXT")
+        await conn.execute("ALTER TABLE votes ADD COLUMN IF NOT EXISTS vote_type TEXT DEFAULT 'critical'")
+        await conn.execute("ALTER TABLE votes ADD COLUMN IF NOT EXISTS parent_vote_id INTEGER REFERENCES votes(id)")
+        await conn.execute("ALTER TABLE votes ADD COLUMN IF NOT EXISTS close_after_hours INTEGER DEFAULT 15")
 
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS quotes (
@@ -140,6 +149,54 @@ async def init_db():
         );
         """)
 
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS narrative_memory (
+            id SERIAL PRIMARY KEY,
+            day INTEGER NOT NULL,
+            summary_type TEXT NOT NULL,
+            content TEXT NOT NULL,
+            token_count INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        """)
+
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS key_events (
+            id SERIAL PRIMARY KEY,
+            day INTEGER NOT NULL,
+            event_type TEXT NOT NULL,
+            title TEXT,
+            description TEXT NOT NULL,
+            is_active BOOLEAN DEFAULT TRUE
+        );
+        """)
+
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS ability_unlock_votes (
+            id SERIAL PRIMARY KEY,
+            character_id INTEGER REFERENCES characters(id) ON DELETE CASCADE,
+            day INTEGER,
+            suggested_abilities JSONB NOT NULL,
+            vote_id INTEGER REFERENCES votes(id),
+            unlocked_ability TEXT,
+            status TEXT DEFAULT 'pending'
+        );
+        """)
+
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS trade_logs (
+            id SERIAL PRIMARY KEY,
+            day INTEGER,
+            character_id INTEGER REFERENCES characters(id) ON DELETE SET NULL,
+            character_name TEXT,
+            origin_kingdom TEXT,
+            destination_kingdom TEXT NOT NULL,
+            item_name TEXT NOT NULL,
+            notes TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        """)
+
         # Inicializar world
         await conn.execute("""
             INSERT INTO world (id, current_day, rules, hierarchy, meta)
@@ -165,6 +222,161 @@ async def get_world_state():
             "SELECT current_day, rules FROM world WHERE id = 1"
         )
         return row["current_day"], row["rules"]
+
+async def get_season_context():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT current_day, season, season_day FROM world WHERE id = 1"
+        )
+
+    seasons = ["Primavera", "Verano", "Otoño", "Invierno"]
+    current_day = row["current_day"] if row else 0
+    season_index = (current_day // 30) % len(seasons)
+    season_day = (current_day % 30) + 1
+    season = seasons[season_index]
+
+    effects = {
+        "Primavera": "Clima variable, crecimiento de recursos naturales, caminos transitables y actividad de bestias moderada.",
+        "Verano": "Calor intenso, viajes largos cansan más, agua y sombra son recursos importantes, combates prolongados agotan más.",
+        "Otoño": "Cosechas, comercio activo, lluvias frecuentes y preparación para escasez invernal.",
+        "Invierno": "Frío severo, viajes lentos, escasez de recursos, tormentas y penalizaciones en combates al aire libre."
+    }
+
+    return {
+        "season": season,
+        "season_day": season_day,
+        "description": effects[season]
+    }
+
+async def sync_world_season(day: int):
+    seasons = ["Primavera", "Verano", "Otoño", "Invierno"]
+    season = seasons[(day // 30) % len(seasons)]
+    season_day = (day % 30) + 1
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE world SET season = $1, season_day = $2 WHERE id = 1",
+            season,
+            season_day
+        )
+
+async def record_narrative_memory(day: int, summary_type: str, content: str):
+    if not content:
+        return
+    token_count = max(1, len(content) // 4)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO narrative_memory (day, summary_type, content, token_count)
+            VALUES ($1, $2, $3, $4)
+        """, day, summary_type, content, token_count)
+
+async def get_narrative_memory():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT day, summary_type, content
+            FROM narrative_memory
+            ORDER BY day, id
+        """)
+
+async def get_recent_full_days(limit=3):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT day, title, full_text, summary, weather
+            FROM daily_logs
+            ORDER BY day DESC
+            LIMIT $1
+        """, limit)
+
+async def get_all_days():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT day, title, full_text, summary, weather
+            FROM daily_logs
+            ORDER BY day
+        """)
+
+async def get_all_characters_for_dashboard():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT name, race, social_status, status, level, current_kingdom
+            FROM characters
+            ORDER BY name
+        """)
+
+async def add_key_event(day: int, event_type: str, title: str, description: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO key_events (day, event_type, title, description, is_active)
+            VALUES ($1, $2, $3, $4, TRUE)
+        """, day, event_type, title, description)
+
+async def get_active_key_events(limit=25):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT day, event_type, title, description
+            FROM key_events
+            WHERE is_active = TRUE
+            ORDER BY day DESC, id DESC
+            LIMIT $1
+        """, limit)
+
+async def record_consequence(vote_id: int, consequence: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        vote = await conn.fetchrow("SELECT day, question, result FROM votes WHERE id = $1", vote_id)
+        if not vote:
+            return False
+        await conn.execute("UPDATE votes SET consequence = $1 WHERE id = $2", consequence, vote_id)
+        await conn.execute("""
+            INSERT INTO key_events (day, event_type, title, description, is_active)
+            VALUES ($1, 'vote_consequence', $2, $3, TRUE)
+        """, vote["day"] or 0, vote["question"], consequence)
+        return True
+
+async def get_vote_consequences(limit=10):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT id, day, question, result, consequence
+            FROM votes
+            WHERE consequence IS NOT NULL
+            ORDER BY id DESC
+            LIMIT $1
+        """, limit)
+
+async def get_power_ranking():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT
+                c.name,
+                c.race,
+                c.level,
+                c.social_status,
+                c.current_kingdom,
+                COALESCE((
+                    SELECT SUM(r.fame_level)
+                    FROM reputation r
+                    WHERE r.character_id = c.id
+                ), 0) AS total_fame,
+                COALESCE((
+                    SELECT COUNT(*)
+                    FROM battle_logs b
+                    WHERE b.participants::text ILIKE '%' || c.name || '%'
+                      AND b.outcome ILIKE '%victoria%'
+                ), 0) AS wins
+            FROM characters c
+            WHERE c.status != 'Muerto'
+            ORDER BY c.level DESC, total_fame DESC, wins DESC, c.name
+        """)
 
 # ---------- CHARACTERS ----------
 
@@ -420,6 +632,16 @@ async def get_quotes(name=None, limit=5):
             LIMIT $1
         """, limit)
 
+async def get_quotes_for_day(day: int):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT day, character_name, quote
+            FROM quotes
+            WHERE day = $1
+            ORDER BY id
+        """, day)
+
 # ---------- INVENTORY ----------
 
 async def apply_inventory_changes(gains, losses, day):
@@ -523,6 +745,67 @@ async def get_reputation(name: str):
             ORDER BY r.fame_level DESC
         """, name)
 
+async def trade_item(character_name: str, destination_kingdom: str, item_name: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        character = await conn.fetchrow("""
+            SELECT id, name, current_kingdom
+            FROM characters
+            WHERE name ILIKE $1
+              AND status != 'Muerto'
+        """, character_name)
+        if not character:
+            return False, "Personaje no encontrado o muerto."
+
+        item = await conn.fetchrow("""
+            SELECT id, item_name, quantity
+            FROM inventory
+            WHERE character_id = $1
+              AND item_name ILIKE $2
+        """, character["id"], item_name)
+        if not item:
+            return False, "Ese personaje no tiene ese objeto en inventario."
+
+        day = await conn.fetchval("SELECT current_day FROM world WHERE id = 1")
+        if item["quantity"] > 1:
+            await conn.execute(
+                "UPDATE inventory SET quantity = quantity - 1 WHERE id = $1",
+                item["id"]
+            )
+        else:
+            await conn.execute("DELETE FROM inventory WHERE id = $1", item["id"])
+
+        notes = f"Comerció {item['item_name']} hacia {destination_kingdom}."
+        await conn.execute("""
+            INSERT INTO reputation (character_id, kingdom, fame_level, notes)
+            VALUES ($1, $2, 1, $3)
+            ON CONFLICT (character_id, kingdom)
+            DO UPDATE SET fame_level = reputation.fame_level + 1,
+                          notes = EXCLUDED.notes
+        """, character["id"], destination_kingdom, notes)
+
+        await conn.execute("""
+            INSERT INTO trade_logs (day, character_id, character_name, origin_kingdom, destination_kingdom, item_name, notes)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+        """, day, character["id"], character["name"], character["current_kingdom"], destination_kingdom, item["item_name"], notes)
+
+        await conn.execute("""
+            INSERT INTO key_events (day, event_type, title, description, is_active)
+            VALUES ($1, 'trade', $2, $3, TRUE)
+        """, day, f"Comercio de {character['name']}", notes)
+
+        return True, notes
+
+async def get_recent_trades(limit=5):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT day, character_name, origin_kingdom, destination_kingdom, item_name, notes
+            FROM trade_logs
+            ORDER BY id DESC
+            LIMIT $1
+        """, limit)
+
 async def get_character_locations():
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -625,21 +908,33 @@ async def get_battles(name=None, limit=5):
             ORDER BY id DESC
             LIMIT $1
         """, limit)
+
+async def get_all_battles():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT day, participants, enemies, outcome, summary
+            FROM battle_logs
+            ORDER BY day, id
+        """)
     
 # ---------- VOTES ----------
 
-async def create_vote(day, question, options, source="ai"):
+async def create_vote(day, question, options, source="ai", vote_type="critical", close_after_hours=15, parent_vote_id=None):
     pool = await get_pool()
     async with pool.acquire() as conn:
         return await conn.fetchval("""
-            INSERT INTO votes (day, question, options, status, source)
-            VALUES ($1, $2, $3::jsonb, 'open', $4)
+            INSERT INTO votes (day, question, options, status, source, vote_type, close_after_hours, parent_vote_id)
+            VALUES ($1, $2, $3::jsonb, 'open', $4, $5, $6, $7)
             RETURNING id
         """,
         day,
         question,
         json.dumps(options),
-        source
+        source,
+        vote_type,
+        close_after_hours,
+        parent_vote_id
         )
 
 async def set_vote_message_id(vote_id: int, message_id: int):
@@ -662,13 +957,33 @@ async def get_closed_votes(limit=3):
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
-            SELECT question, result
+            SELECT question, result, consequence, vote_type
             FROM votes
             WHERE status = 'closed'
+              AND COALESCE(vote_type, 'critical') != 'quick'
+              AND COALESCE(result, '') != 'Empate - segunda vuelta creada'
             ORDER BY id DESC
             LIMIT $1
         """, limit)
         return rows
+
+async def get_votes(status=None, limit=10):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if status:
+            return await conn.fetch("""
+                SELECT id, day, question, options, result, status, source, vote_type, consequence
+                FROM votes
+                WHERE status = $1
+                ORDER BY id DESC
+                LIMIT $2
+            """, status, limit)
+        return await conn.fetch("""
+            SELECT id, day, question, options, result, status, source, vote_type, consequence
+            FROM votes
+            ORDER BY id DESC
+            LIMIT $1
+        """, limit)
 
 # ---------- MUERTE PERMANENTE ----------
 
@@ -720,6 +1035,11 @@ async def kill_character(name: str, cause: str):
             death_summary
         )
 
+        await conn.execute("""
+            INSERT INTO key_events (day, event_type, title, description, is_active)
+            VALUES ($1, 'death', $2, $3, TRUE)
+        """, day, f"Muerte de {character_name}", death_text)
+
     return True
 
 # ---------- CERRAR VOTACIÓN ----------
@@ -734,17 +1054,75 @@ async def close_vote(vote_id: int, result: str):
             WHERE id = $2
         """, result, vote_id)
 
+async def get_vote(vote_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchrow("""
+            SELECT id, day, question, options, result, status, source, vote_type, parent_vote_id, consequence
+            FROM votes
+            WHERE id = $1
+        """, vote_id)
+
 # ---------- VOTACIONES ABIERTAS ----------
 
 async def get_open_votes_older_than(hours: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         return await conn.fetch("""
-            SELECT id, question, options, message_id
+            SELECT id, day, question, options, message_id, vote_type, parent_vote_id, close_after_hours
             FROM votes
             WHERE status = 'open'
-              AND created_at <= NOW() - ($1 * INTERVAL '1 hour')
+              AND created_at <= NOW() - (COALESCE(close_after_hours, $1) * INTERVAL '1 hour')
         """, hours)
+
+async def create_ability_unlock_vote(character_name: str, day: int, suggested_abilities, vote_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        character_id = await conn.fetchval(
+            "SELECT id FROM characters WHERE name = $1",
+            character_name
+        )
+        if not character_id:
+            return False
+        await conn.execute("""
+            INSERT INTO ability_unlock_votes (character_id, day, suggested_abilities, vote_id, status)
+            VALUES ($1, $2, $3::jsonb, $4, 'pending')
+        """, character_id, day, json.dumps(suggested_abilities), vote_id)
+        return True
+
+async def apply_unlocked_ability(vote_id: int, ability: str):
+    if not ability or ability.lower() == "ninguna" or ability == "Sin votos":
+        return False
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("""
+            SELECT au.id, au.character_id, c.name, c.abilities
+            FROM ability_unlock_votes au
+            JOIN characters c ON c.id = au.character_id
+            WHERE au.vote_id = $1
+              AND au.status != 'applied'
+        """, vote_id)
+        if not row:
+            return False
+
+        abilities = row["abilities"] or {}
+        if isinstance(abilities, str):
+            abilities = json.loads(abilities)
+        key = ability.lower().replace(" ", "_")[:60]
+        abilities[key] = ability
+
+        await conn.execute("""
+            UPDATE characters
+            SET abilities = $1::jsonb
+            WHERE id = $2
+        """, json.dumps(abilities, ensure_ascii=False), row["character_id"])
+        await conn.execute("""
+            UPDATE ability_unlock_votes
+            SET unlocked_ability = $1, status = 'applied'
+            WHERE id = $2
+        """, ability, row["id"])
+        return row["name"]
 
 # ---------- RESET GLOBAL ----------
 
@@ -759,6 +1137,10 @@ async def reset_world_progress():
         await conn.execute("DELETE FROM reputation")
         await conn.execute("DELETE FROM npcs")
         await conn.execute("DELETE FROM battle_logs")
+        await conn.execute("DELETE FROM narrative_memory")
+        await conn.execute("DELETE FROM key_events")
+        await conn.execute("DELETE FROM ability_unlock_votes")
+        await conn.execute("DELETE FROM trade_logs")
 
         await conn.execute("""
             UPDATE characters
@@ -770,6 +1152,8 @@ async def reset_world_progress():
 
         await conn.execute("""
             UPDATE world
-            SET current_day = 0
+            SET current_day = 0,
+                season = 'Primavera',
+                season_day = 0
             WHERE id = 1
         """)

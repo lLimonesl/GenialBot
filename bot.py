@@ -1,9 +1,11 @@
 import os
 import json
+import random
+import asyncio
 import discord
 from discord.ext import commands, tasks
 from database import init_db
-from story_engine import generate_next_day, detect_critical_decision
+from story_engine import generate_next_day, detect_critical_decision, suggest_abilities_for_level_up
 from dotenv import load_dotenv
 from db import get_pool
 from database import get_characters
@@ -15,6 +17,9 @@ from database import reset_world_progress
 from database import get_character_stats, get_day_log, search_logs_by_character
 from database import get_inventory, get_quotes, get_reputation, get_character_locations
 from database import get_npcs, get_npc, get_battles
+from database import get_power_ranking, record_consequence, get_votes, get_active_key_events
+from database import get_quotes_for_day, create_ability_unlock_vote, apply_unlocked_ability, get_vote
+from database import trade_item, get_recent_trades
 from pdf_exporter import export_day_to_pdf
 
 # Cargar variables de entorno
@@ -29,6 +34,7 @@ intents.message_content = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 bot.remove_command("help")
+dashboard_started = False
 
 RAW_METADATA_PREFIXES = (
     "[WEATHER]",
@@ -42,7 +48,9 @@ RAW_METADATA_PREFIXES = (
     "[NPC_APPEAR]",
     "[NPC_DISAPPEAR]",
     "[BATTLE]",
-    "[LEVEL_UP]"
+    "[LEVEL_UP]",
+    "[KEY_EVENT]",
+    "[SEASON]"
 )
 
 def hide_raw_metadata_tags(text):
@@ -104,6 +112,7 @@ async def send_commands_help(ctx):
 **Personajes**
 • `!personajes` - Lista personajes vivos
 • `!stats <personaje>` - Perfil, nivel, equipo, arcos, fama y combates
+• `!ranking` - Marcador de poder por nivel, fama y victorias
 • `!inventario <personaje>` - Inventario actual
 • `!mapa` - Ubicación actual de personajes
 • `!fama <personaje>` - Reputación por reino
@@ -114,14 +123,21 @@ async def send_commands_help(ctx):
 • `!npcs` - NPCs activos
 • `!npc <nombre>` - Detalle de un NPC
 • `!combates [personaje]` - Combates registrados
+• `!eventos` - Eventos clave activos del mundo
+• `!comerciar personaje|reino destino|objeto` - Comercio simple de objeto
+• `!comercio` - Últimos comercios registrados
 
 **Votaciones**
+• `!encuesta pregunta|opción1|opción2|...` - Encuesta rápida
 • `!votar pregunta|opción1|opción2|...` - Crea votación manual (admin)
 • `!cerrar_votacion <id> <resultado>` - Cierra una votación (admin)
+• `!votaciones [abiertas|cerradas]` - Lista votaciones
+• `!consecuencia <id> <texto>` - Guarda consecuencia visible (admin)
 
 **Administración**
 • `!matar <nombre> [causa]` - Muerte permanente (admin)
 • `!resetear_mundo` - Reinicia progreso narrativo (admin)
+• `!exportar_novela` - Genera HTML de la novela (admin)
 • `!dbtest` - Prueba conexión PostgreSQL
 """.strip()
     await send_split(ctx, msg)
@@ -162,6 +178,48 @@ async def publish_critical_decision(channel, day, texto):
     for i in range(len(options)):
         await poll.add_reaction(emojis[i])
 
+async def publish_ability_votes(channel, day, level_ups):
+    if not channel or not level_ups:
+        return
+
+    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
+    for character_name, _amount in level_ups:
+        abilities = await suggest_abilities_for_level_up(character_name)
+        if not abilities:
+            continue
+        options = abilities[:3] + ["Ninguna"]
+        msg = f"⬆️ **NUEVA HABILIDAD DISPONIBLE (Día {day})**\n"
+        msg += f"{character_name} ha subido de nivel. ¿Qué habilidad desbloquea?\n"
+        for i, option in enumerate(options):
+            msg += f"{emojis[i]} {option}\n"
+
+        poll = await channel.send(msg)
+        vote_id = await create_vote(
+            day,
+            f"Habilidad desbloqueable para {character_name}",
+            options,
+            source="ability",
+            vote_type="ability",
+            close_after_hours=15
+        )
+        await set_vote_message_id(vote_id, poll.id)
+        await create_ability_unlock_vote(character_name, day, options, vote_id)
+
+        for i in range(len(options)):
+            await poll.add_reaction(emojis[i])
+
+async def publish_quote_of_day(channel, day):
+    if not channel:
+        return
+    quotes = await get_quotes_for_day(day)
+    if not quotes:
+        return
+    quote = random.choice(quotes)
+    await channel.send(
+        f"💬 **Cita destacada del Día {day}**\n"
+        f"*\"{quote['quote']}\"* — {quote['character_name']}"
+    )
+
 @tasks.loop(minutes=30)
 async def close_votes_task():
     votes = await get_open_votes_older_than(15)
@@ -197,20 +255,58 @@ async def close_votes_task():
             result = "Sin votos"
         else:
             options = decode_vote_options(vote["options"])
+            max_votes = max(counts.values())
+            tied = [emoji for emoji, count in counts.items() if count == max_votes]
+
+            if len(tied) > 1 and not vote["parent_vote_id"]:
+                tied_options = []
+                for emoji in tied:
+                    index = emojis.index(emoji)
+                    if index < len(options):
+                        tied_options.append(options[index])
+
+                runoff_msg = f"🔁 **SEGUNDA VUELTA (Día {vote['day']})**\n{vote['question']}\n"
+                for i, option in enumerate(tied_options):
+                    runoff_msg += f"{emojis[i]} {option}\n"
+
+                runoff = await channel.send(runoff_msg)
+                runoff_id = await create_vote(
+                    vote["day"],
+                    vote["question"],
+                    tied_options,
+                    source="runoff",
+                    vote_type="runoff",
+                    close_after_hours=6,
+                    parent_vote_id=vote["id"]
+                )
+                await set_vote_message_id(runoff_id, runoff.id)
+                for i in range(len(tied_options)):
+                    await runoff.add_reaction(emojis[i])
+                await close_vote(vote["id"], "Empate - segunda vuelta creada")
+                await channel.send("🔁 Hubo empate. Se abrió una segunda vuelta con las opciones empatadas.")
+                continue
+
             winner = max(counts, key=counts.get)
             index = emojis.index(winner)
-            result = options[index]
+            result = options[index] if index < len(options) else "Sin resultado"
 
         await close_vote(vote["id"], result)
+
+        ability_message = ""
+        if vote["vote_type"] == "ability":
+            character_name = await apply_unlocked_ability(vote["id"], result)
+            if character_name:
+                ability_message = f"\n✨ {character_name} desbloqueó: **{result}**"
 
         await channel.send(
             f"🗳️ **VOTACIÓN CERRADA**\n"
             f"Pregunta: {vote['question']}\n"
-            f"Resultado: **{result}**"
+            f"Resultado: **{result}**{ability_message}"
         )
 
 @bot.event
 async def on_ready():
+    global dashboard_started
     await init_db()
 
     if not daily_story_task.is_running():
@@ -219,11 +315,26 @@ async def on_ready():
     if not close_votes_task.is_running():
         close_votes_task.start()
 
+    if not dashboard_started:
+        dashboard_started = True
+        asyncio.create_task(start_dashboard())
+
     print(f"Bot conectado como {bot.user}")
+
+async def start_dashboard():
+    try:
+        import uvicorn
+        from dashboard import app
+        port = int(os.getenv("PORT", "8000"))
+        config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="info")
+        server = uvicorn.Server(config)
+        await server.serve()
+    except Exception as exc:
+        print(f"Dashboard no iniciado: {exc}")
 
 @tasks.loop(hours=24)
 async def daily_story_task():
-    clean_text, display_text, title = await generate_next_day()
+    clean_text, display_text, title, level_ups = await generate_next_day()
 
     # Enviar historia
     await send_long_message(CHANNEL_ID, f"**{title}**\n{display_text}")
@@ -244,6 +355,8 @@ async def daily_story_task():
     )
 
     await publish_critical_decision(channel, day, clean_text)
+    await publish_ability_votes(channel, day, level_ups)
+    await publish_quote_of_day(channel, day)
 
 
 # Comando de prueba
@@ -300,6 +413,23 @@ async def stats(ctx, *, nombre: str):
         for rep in data["reputation"][:5]:
             msg += f"• {rep['kingdom']}: {rep['fame_level']}\n"
 
+    await send_split(ctx, msg)
+
+@bot.command()
+async def ranking(ctx):
+    rows = await get_power_ranking()
+    if not rows:
+        await ctx.send("No hay personajes vivos para rankear.")
+        return
+
+    msg = "**Marcador de poder**\n"
+    for i, row in enumerate(rows, start=1):
+        location = row["current_kingdom"] or "ubicación desconocida"
+        msg += (
+            f"{i}. **{row['name']}** ({row['race']}) - "
+            f"Nivel {row['level']} | Fama {row['total_fame']} | "
+            f"Victorias {row['wins']} | {location}\n"
+        )
     await send_split(ctx, msg)
 
 @bot.command()
@@ -422,6 +552,32 @@ async def combates(ctx, *, nombre: str = None):
     await send_split(ctx, msg)
 
 @bot.command()
+async def comerciar(ctx, *, datos: str):
+    parts = [p.strip() for p in datos.split("|")]
+    if len(parts) != 3:
+        await ctx.send("Formato: `!comerciar personaje|reino destino|objeto`")
+        return
+
+    ok, message = await trade_item(parts[0], parts[1], parts[2])
+    if not ok:
+        await ctx.send(f"❌ {message}")
+        return
+    await ctx.send(f"✅ {message}\nFama +1 en {parts[1]}.")
+
+@bot.command()
+async def comercio(ctx):
+    rows = await get_recent_trades(limit=10)
+    if not rows:
+        await ctx.send("No hay comercio registrado.")
+        return
+
+    msg = "**Comercio reciente:**\n"
+    for row in rows:
+        origin = row["origin_kingdom"] or "origen desconocido"
+        msg += f"• Día {row['day']}: {row['character_name']} movió {row['item_name']} de {origin} a {row['destination_kingdom']}\n"
+    await send_split(ctx, msg)
+
+@bot.command()
 @commands.has_permissions(administrator=True)
 async def matar(ctx, nombre: str, *, causa="Destino del mundo"):
     ok = await kill_character(nombre, causa)
@@ -477,10 +633,93 @@ async def votar(ctx, *, pregunta_opciones: str):
         await poll.add_reaction(emojis[i])
 
 @bot.command()
+async def encuesta(ctx, *, pregunta_opciones: str):
+    parts = pregunta_opciones.split("|")
+    if len(parts) < 3:
+        await ctx.send("Formato: `!encuesta pregunta|opcion1|opcion2|...`")
+        return
+
+    question = parts[0].strip()
+    options = [p.strip() for p in parts[1:] if p.strip()]
+    if len(options) < 2:
+        await ctx.send("Necesitas al menos 2 opciones.")
+        return
+    if len(options) > 5:
+        await ctx.send("Máximo 5 opciones por encuesta.")
+        return
+
+    day = await get_current_day()
+    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    msg = f"📊 **ENCUESTA RÁPIDA (Día {day})**\n{question}\n"
+    for i, opt in enumerate(options):
+        msg += f"{emojis[i]} {opt}\n"
+
+    poll = await ctx.send(msg)
+    vote_id = await create_vote(
+        day,
+        question,
+        options,
+        source="quick",
+        vote_type="quick",
+        close_after_hours=1
+    )
+    await set_vote_message_id(vote_id, poll.id)
+
+    for i in range(len(options)):
+        await poll.add_reaction(emojis[i])
+
+@bot.command()
 @commands.has_permissions(administrator=True)
 async def cerrar_votacion(ctx, vote_id: int, *, resultado: str):
+    vote = await get_vote(vote_id)
     await close_vote(vote_id, resultado)
-    await ctx.send(f"✅ Votación {vote_id} cerrada.\nResultado: {resultado}")
+    ability_message = ""
+    if vote and vote["vote_type"] == "ability":
+        character_name = await apply_unlocked_ability(vote_id, resultado)
+        if character_name:
+            ability_message = f"\n✨ {character_name} desbloqueó: **{resultado}**"
+    await ctx.send(f"✅ Votación {vote_id} cerrada.\nResultado: {resultado}{ability_message}")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def consecuencia(ctx, vote_id: int, *, texto: str):
+    ok = await record_consequence(vote_id, texto)
+    if not ok:
+        await ctx.send("No encontré esa votación.")
+        return
+    await ctx.send(f"✅ Consecuencia registrada para votación {vote_id}.")
+
+@bot.command()
+async def votaciones(ctx, estado: str = None):
+    status = None
+    if estado in ("abiertas", "open"):
+        status = "open"
+    elif estado in ("cerradas", "closed"):
+        status = "closed"
+
+    rows = await get_votes(status=status, limit=10)
+    if not rows:
+        await ctx.send("No hay votaciones para mostrar.")
+        return
+
+    msg = "**Votaciones recientes:**\n"
+    for row in rows:
+        result = row["result"] or "sin resultado"
+        consequence = f" | Consecuencia: {row['consequence']}" if row["consequence"] else ""
+        msg += f"• #{row['id']} [{row['status']}/{row['vote_type']}] Día {row['day']} - {row['question']} → {result}{consequence}\n"
+    await send_split(ctx, msg)
+
+@bot.command()
+async def eventos(ctx):
+    rows = await get_active_key_events(limit=15)
+    if not rows:
+        await ctx.send("No hay eventos clave activos registrados.")
+        return
+
+    msg = "**Eventos clave activos:**\n"
+    for row in rows:
+        msg += f"• Día {row['day']} [{row['event_type']}] {row['title'] or 'Evento'}: {row['description']}\n"
+    await send_split(ctx, msg)
 
 @bot.command()
 async def dbtest(ctx):
@@ -506,8 +745,18 @@ async def resetear_mundo(ctx):
     )
 
 @bot.command()
+@commands.has_permissions(administrator=True)
+async def exportar_novela(ctx):
+    from webnovel_exporter import export_web_novel
+    path = await export_web_novel()
+    await ctx.send(
+        content="📚 **Web novel exportada**",
+        file=discord.File(path)
+    )
+
+@bot.command()
 async def generar_dia(ctx):
-    clean_text, display_text, title = await generate_next_day()
+    clean_text, display_text, title, level_ups = await generate_next_day()
 
     # Enviar historia (maneja +2000 chars)
     await send_long_message(CHANNEL_ID, f"**{title}**\n{display_text}")
@@ -528,6 +777,8 @@ async def generar_dia(ctx):
     channel = bot.get_channel(CHANNEL_ID)
     if channel:
         await publish_critical_decision(channel, day, clean_text)
+        await publish_ability_votes(channel, day, level_ups)
+        await publish_quote_of_day(channel, day)
 
 
 bot.run(TOKEN)

@@ -50,8 +50,17 @@ CREATE TABLE IF NOT EXISTS votes (
     status TEXT,
     source TEXT,
     message_id BIGINT,
-    created_at TIMESTAMP DEFAULT NOW()
+    created_at TIMESTAMP DEFAULT NOW(),
+    consequence TEXT,
+    vote_type TEXT DEFAULT 'critical',
+    parent_vote_id INTEGER REFERENCES votes(id),
+    close_after_hours INTEGER DEFAULT 15
 );
+
+ALTER TABLE votes ADD COLUMN IF NOT EXISTS consequence TEXT;
+ALTER TABLE votes ADD COLUMN IF NOT EXISTS vote_type TEXT DEFAULT 'critical';
+ALTER TABLE votes ADD COLUMN IF NOT EXISTS parent_vote_id INTEGER REFERENCES votes(id);
+ALTER TABLE votes ADD COLUMN IF NOT EXISTS close_after_hours INTEGER DEFAULT 15;
 
 CREATE TABLE IF NOT EXISTS quotes (
     id SERIAL PRIMARY KEY,
@@ -102,4 +111,47 @@ CREATE TABLE IF NOT EXISTS battle_logs (
     enemies JSONB,
     outcome TEXT,
     summary TEXT
+);
+
+ALTER TABLE world ADD COLUMN IF NOT EXISTS season TEXT DEFAULT 'Primavera';
+ALTER TABLE world ADD COLUMN IF NOT EXISTS season_day INTEGER DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS narrative_memory (
+    id SERIAL PRIMARY KEY,
+    day INTEGER NOT NULL,
+    summary_type TEXT NOT NULL,
+    content TEXT NOT NULL,
+    token_count INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS key_events (
+    id SERIAL PRIMARY KEY,
+    day INTEGER NOT NULL,
+    event_type TEXT NOT NULL,
+    title TEXT,
+    description TEXT NOT NULL,
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+CREATE TABLE IF NOT EXISTS ability_unlock_votes (
+    id SERIAL PRIMARY KEY,
+    character_id INTEGER REFERENCES characters(id) ON DELETE CASCADE,
+    day INTEGER,
+    suggested_abilities JSONB NOT NULL,
+    vote_id INTEGER REFERENCES votes(id),
+    unlocked_ability TEXT,
+    status TEXT DEFAULT 'pending'
+);
+
+CREATE TABLE IF NOT EXISTS trade_logs (
+    id SERIAL PRIMARY KEY,
+    day INTEGER,
+    character_id INTEGER REFERENCES characters(id) ON DELETE SET NULL,
+    character_name TEXT,
+    origin_kingdom TEXT,
+    destination_kingdom TEXT NOT NULL,
+    item_name TEXT NOT NULL,
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT NOW()
 );

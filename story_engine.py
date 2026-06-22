@@ -20,7 +20,18 @@ from database import (
     mark_npcs_inactive,
     save_battles,
     get_inventory_for_prompt,
-    get_npcs
+    get_npcs,
+    record_narrative_memory,
+    get_narrative_memory,
+    get_recent_full_days,
+    get_all_days,
+    get_active_key_events,
+    add_key_event,
+    get_vote_consequences,
+    get_season_context,
+    sync_world_season,
+    get_character_by_name,
+    get_recent_trades
 )
 
 load_dotenv()
@@ -38,7 +49,9 @@ METADATA_TAGS = (
     "NPC_APPEAR",
     "NPC_DISAPPEAR",
     "BATTLE",
-    "LEVEL_UP"
+    "LEVEL_UP",
+    "KEY_EVENT",
+    "SEASON"
 )
 METADATA_LINE_RE = re.compile(
     rf"^\s*(?:[-*>`]+\s*)?\[({'|'.join(METADATA_TAGS)})\]\s*(.*)$"
@@ -51,6 +64,11 @@ async def generate_next_day():
     votes = await get_closed_votes()
     inventory = await get_inventory_for_prompt()
     npcs = await get_npcs()
+    narrative_context = await build_narrative_context()
+    key_events = await get_active_key_events()
+    consequences = await get_vote_consequences(limit=5)
+    season = await get_season_context()
+    trades = await get_recent_trades(limit=5)
 
     char_text = "\n".join(
         f"""
@@ -82,15 +100,46 @@ async def generate_next_day():
     ) or "Sin NPCs activos registrados."
 
     vote_text = "\n".join(
-        f"- {v['question']} → {v['result']}"
+        f"- {v['question']} → {v['result']}" + (f" | Consecuencia: {v['consequence']}" if v['consequence'] else "")
         for v in votes
-    )
+    ) or "Sin decisiones cerradas relevantes."
+
+    key_event_text = "\n".join(
+        f"- Día {e['day']} [{e['event_type']}] {e['title'] or 'Evento'}: {e['description']}"
+        for e in key_events
+    ) or "Sin eventos clave activos registrados."
+
+    consequence_text = "\n".join(
+        f"- Día {c['day']} | {c['question']} → {c['result']}: {c['consequence']}"
+        for c in consequences
+    ) or "Sin consecuencias registradas."
+
+    season_text = f"{season['season']} (día {season['season_day']} de 30). {season['description']}"
+    trade_text = "\n".join(
+        f"- Día {t['day']}: {t['character_name']} comerció {t['item_name']} hacia {t['destination_kingdom']}"
+        for t in trades
+    ) or "Sin comercio reciente registrado."
 
     prompt = f"""
 Eres el narrador de una historia isekai seria y coherente.
 
 REGLAS DEL MUNDO:
 {rules}
+
+ESTACIÓN Y CLIMA PERSISTENTE:
+{season_text}
+
+HISTORIA ANTERIOR:
+{narrative_context}
+
+EVENTOS CLAVE ACTIVOS:
+{key_event_text}
+
+CONSECUENCIAS VISIBLES DE VOTACIONES:
+{consequence_text}
+
+COMERCIO RECIENTE ENTRE REINOS:
+{trade_text}
 
 REGLAS DE PROGRESIÓN:
 - NO asignes niveles directamente.
@@ -141,6 +190,7 @@ No uses estos tags dentro de la narración normal.
 - [NPC_APPEAR] Nombre|Raza|Rol|Reino o ubicación|Descripción
 - [NPC_DISAPPEAR] Nombre
 - [BATTLE] participantes separados por coma|enemigos separados por coma|resultado|resumen breve
+- [KEY_EVENT] tipo|título|descripción
 """
 
     response = client.chat.completions.create(
@@ -171,6 +221,19 @@ No uses estos tags dentro de la narración normal.
     await upsert_npcs(metadata["npcs_appear"], new_day)
     await mark_npcs_inactive(metadata["npcs_disappear"], new_day)
     await save_battles(new_day, metadata["battles"])
+    await record_narrative_memory(new_day, "daily", summary)
+    await sync_world_season(new_day)
+
+    if new_day % 7 == 0:
+        weekly_summary = await compress_week(new_day)
+        await record_narrative_memory(new_day, "weekly", weekly_summary)
+
+    if new_day % 28 == 0:
+        compressed_summary = await compress_month(new_day)
+        await record_narrative_memory(new_day, "compressed", compressed_summary)
+
+    for event_type, title, description in metadata["key_events"]:
+        await add_key_event(new_day, event_type, title, description)
 
     for character_name, arc_name, arc_goal in metadata["new_arcs"]:
         await create_character_arc(character_name, arc_name, arc_goal)
@@ -179,7 +242,111 @@ No uses estos tags dentro de la narración normal.
         await update_arc_progress(character_name, arc_name, amount)
 
     display_text = append_metadata_summary(clean_text, metadata)
-    return clean_text, display_text, f"Día {new_day}"
+    return clean_text, display_text, f"Día {new_day}", level_ups
+
+async def build_narrative_context():
+    memory = await get_narrative_memory()
+    recent_days = await get_recent_full_days(limit=3)
+
+    if not memory:
+        all_days = await get_all_days()
+        recent_numbers = {d["day"] for d in recent_days}
+        older_summaries = [d for d in all_days if d["day"] not in recent_numbers]
+        sections = []
+        if older_summaries:
+            sections.append("RESÚMENES HISTÓRICOS EXISTENTES:\n" + "\n".join(
+                f"- Día {d['day']}: {d['summary'] or ''}"
+                for d in older_summaries
+            ))
+        if recent_days:
+            ordered_days = list(reversed(recent_days))
+            sections.append("ÚLTIMOS DÍAS COMPLETOS:\n" + "\n\n".join(
+                f"Día {d['day']} - {d['title'] or 'Sin título'}\nClima: {d['weather'] or 'No registrado'}\n{d['full_text'] or d['summary'] or ''}"
+                for d in ordered_days
+            ))
+        return "\n\n".join(sections) if sections else "Aún no hay historia previa registrada."
+
+    compressed = [m for m in memory if m["summary_type"] == "compressed"]
+    max_compressed_day = max([m["day"] for m in compressed], default=0)
+    weekly = [m for m in memory if m["summary_type"] == "weekly" and m["day"] > max_compressed_day]
+
+    sections = []
+    if compressed:
+        sections.append("RESÚMENES COMPRIMIDOS DE LA HISTORIA:\n" + "\n".join(
+            f"- Hasta día {m['day']}: {m['content']}" for m in compressed
+        ))
+    if weekly:
+        sections.append("RESÚMENES SEMANALES RECIENTES:\n" + "\n".join(
+            f"- Semana hasta día {m['day']}: {m['content']}" for m in weekly
+        ))
+    if recent_days:
+        ordered_days = list(reversed(recent_days))
+        sections.append("ÚLTIMOS DÍAS COMPLETOS:\n" + "\n\n".join(
+            f"Día {d['day']} - {d['title'] or 'Sin título'}\nClima: {d['weather'] or 'No registrado'}\n{d['full_text'] or d['summary'] or ''}"
+            for d in ordered_days
+        ))
+
+    return "\n\n".join(sections) if sections else "Aún no hay historia previa registrada."
+
+async def compress_week(day: int):
+    memory = await get_narrative_memory()
+    start = day - 6
+    daily = [m for m in memory if m["summary_type"] == "daily" and start <= m["day"] <= day]
+    content = "\n".join(f"Día {m['day']}: {m['content']}" for m in daily)
+    if not content:
+        return "Sin eventos suficientes para resumir esta semana."
+    return await summarize_memory(content, "Resume esta semana de la historia en 300-500 palabras. Conserva eventos, consecuencias, combates, cambios de estado y giros importantes.")
+
+async def compress_month(day: int):
+    memory = await get_narrative_memory()
+    start = day - 27
+    weekly = [m for m in memory if m["summary_type"] == "weekly" and start <= m["day"] <= day]
+    content = "\n".join(f"Hasta día {m['day']}: {m['content']}" for m in weekly)
+    if not content:
+        return "Sin resúmenes semanales suficientes para compresión mensual."
+    return await summarize_memory(content, "Comprime estos resúmenes semanales en una memoria mensual de 400-600 palabras. No pierdas muertes, consecuencias, cambios de mundo ni progreso de personajes.")
+
+async def summarize_memory(content: str, instruction: str):
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": f"{instruction}\n\nCONTENIDO:\n{content}"}],
+        temperature=0.2
+    )
+    return response.choices[0].message.content.strip()
+
+async def suggest_abilities_for_level_up(character_name: str):
+    character = await get_character_by_name(character_name)
+    if not character:
+        return []
+    prompt = f"""
+Sugiere exactamente 3 habilidades desbloqueables para este personaje.
+Deben ser coherentes con su raza, nivel, habilidades actuales, pasivas y estilo.
+No contradigas sus limitaciones ni inventes poderes excesivos.
+
+Personaje: {character['name']}
+Raza: {character['race']}
+Nivel: {character['level']}
+Habilidades actuales: {character['abilities']}
+Pasivas: {character['passives']}
+Arma: {character['weapon']}
+Movimiento final: {character['final_move']}
+
+Responde solo en JSON: {{"abilities": ["habilidad 1", "habilidad 2", "habilidad 3"]}}
+"""
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.4
+    )
+    try:
+        import json
+        content = response.choices[0].message.content.strip()
+        if content.startswith("```"):
+            content = content.strip("`").replace("json\n", "", 1).strip()
+        data = json.loads(content)
+        return [a for a in data.get("abilities", []) if isinstance(a, str)][:3]
+    except Exception:
+        return []
 
 async def detect_critical_decision(text: str):
     """
@@ -314,7 +481,8 @@ def extract_metadata(text: str):
         "arc_progress": [],
         "npcs_appear": [],
         "npcs_disappear": [],
-        "battles": []
+        "battles": [],
+        "key_events": []
     }
 
     for raw_line in text.splitlines():
@@ -387,6 +555,11 @@ def extract_metadata(text: str):
                 participants = [p.strip() for p in parts[0].split(",") if p.strip()]
                 enemies = [e.strip() for e in parts[1].split(",") if e.strip()]
                 metadata["battles"].append((participants, enemies, parts[2], parts[3]))
+
+        elif line.startswith("[KEY_EVENT]"):
+            parts = split_payload(line, "[KEY_EVENT]", 3)
+            if parts:
+                metadata["key_events"].append(tuple(parts))
 
     return metadata
 
