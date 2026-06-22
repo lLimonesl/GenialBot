@@ -972,14 +972,14 @@ async def get_votes(status=None, limit=10):
     async with pool.acquire() as conn:
         if status:
             return await conn.fetch("""
-                SELECT id, day, question, options, result, status, source, vote_type, consequence
+                SELECT id, day, question, options, result, status, source, vote_type, consequence, message_id
                 FROM votes
                 WHERE status = $1
                 ORDER BY id DESC
                 LIMIT $2
             """, status, limit)
         return await conn.fetch("""
-            SELECT id, day, question, options, result, status, source, vote_type, consequence
+            SELECT id, day, question, options, result, status, source, vote_type, consequence, message_id
             FROM votes
             ORDER BY id DESC
             LIMIT $1

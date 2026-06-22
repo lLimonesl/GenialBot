@@ -254,6 +254,7 @@ No uses estos tags dentro de la narración normal.
 
     text = strip_prompt_leaks(response.choices[0].message.content)
     metadata = extract_metadata(text)
+    metadata["quotes"] = filter_memorable_quotes(metadata["quotes"], recent_quotes)
     clean_text = strip_metadata_tags(text)
 
     level_ups = extract_level_ups(text)
@@ -358,6 +359,47 @@ def extract_recent_character_focus(recent_days, characters):
         if count > 0
     ][:5]
     return ", ".join(focused)
+
+def quote_tokens(text):
+    cleaned = "".join(ch.lower() if ch.isalnum() else " " for ch in text)
+    return {word for word in cleaned.split() if len(word) > 3}
+
+def quotes_are_similar(left, right):
+    left_tokens = quote_tokens(left)
+    right_tokens = quote_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+
+    overlap = len(left_tokens & right_tokens)
+    return overlap / min(len(left_tokens), len(right_tokens)) >= 0.45
+
+def filter_memorable_quotes(quotes, recent_quotes):
+    if not quotes:
+        return []
+
+    recent_character_counts = {}
+    for quote in recent_quotes[:12]:
+        name = quote["character_name"]
+        recent_character_counts[name] = recent_character_counts.get(name, 0) + 1
+
+    filtered = []
+    used_characters = set()
+    recent_texts = [quote["quote"] for quote in recent_quotes[:16]]
+
+    for character_name, quote in quotes:
+        if character_name in used_characters:
+            continue
+        if recent_character_counts.get(character_name, 0) >= 2:
+            continue
+        if any(quotes_are_similar(quote, recent) for recent in recent_texts):
+            continue
+
+        filtered.append((character_name, quote))
+        used_characters.add(character_name)
+        if len(filtered) >= 2:
+            break
+
+    return filtered
 
 async def compress_week(day: int):
     memory = await get_narrative_memory()

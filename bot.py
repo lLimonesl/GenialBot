@@ -110,7 +110,7 @@ def quotes_are_similar(left, right):
 
 def select_featured_quote(quotes, recent_quotes, day):
     previous_quotes = [q for q in recent_quotes if q["day"] != day]
-    recent_characters = {q["character_name"] for q in previous_quotes[:5]}
+    recent_characters = {q["character_name"] for q in previous_quotes[:12]}
 
     fresh_quotes = []
     for quote in quotes:
@@ -126,13 +126,6 @@ def select_featured_quote(quotes, recent_quotes, day):
     non_repeated_character = [q for q in quotes if q["character_name"] not in recent_characters]
     if non_repeated_character:
         return random.choice(non_repeated_character)
-
-    non_similar = [
-        q for q in quotes
-        if not any(quotes_are_similar(q["quote"], previous["quote"]) for previous in previous_quotes[:12])
-    ]
-    if non_similar:
-        return random.choice(non_similar)
 
     return None
 
@@ -218,6 +211,65 @@ async def publish_critical_decision(channel, day, texto):
 
     for i in range(len(options)):
         await poll.add_reaction(emojis[i])
+
+async def close_pending_votes_for_manual_generation(channel):
+    if not channel:
+        return []
+
+    open_votes = await get_votes(status="open", limit=50)
+    if not open_votes:
+        return []
+
+    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    closed = []
+
+    for vote in open_votes:
+        message = None
+        if vote["message_id"]:
+            try:
+                message = await channel.fetch_message(vote["message_id"])
+            except discord.NotFound:
+                message = None
+
+        if not message:
+            async for candidate in channel.history(limit=200):
+                if vote["question"] in candidate.content:
+                    message = candidate
+                    break
+
+        if not message:
+            continue
+
+        counts = await count_reactions(message)
+        options = decode_vote_options(vote["options"])
+        if not counts or max(counts.values()) <= 0:
+            result = "Sin votos"
+            tied = []
+        else:
+            max_votes = max(counts.values())
+            tied = [emoji for emoji, count in counts.items() if count == max_votes]
+            if len(tied) == 1:
+                index = emojis.index(tied[0])
+                result = options[index] if index < len(options) else "Sin resultado"
+            else:
+                tied_options = []
+                for emoji in tied:
+                    index = emojis.index(emoji)
+                    if index < len(options):
+                        tied_options.append(options[index])
+                result = "Empate: " + " / ".join(tied_options)
+
+        await close_vote(vote["id"], result)
+
+        ability_message = ""
+        if vote["vote_type"] == "ability" and result not in ("Sin votos", "Sin resultado") and not tied:
+            character_name = await apply_unlocked_ability(vote["id"], result)
+            if character_name:
+                ability_message = f" | {character_name} desbloqueó habilidad"
+
+        closed.append(f"#{vote['id']} {vote['question']} → {result}{ability_message}")
+
+    return closed
 
 async def publish_ability_votes(channel, day, level_ups):
     if not channel or not level_ups:
@@ -804,6 +856,11 @@ async def exportar_novela(ctx):
 
 @bot.command()
 async def generar_dia(ctx):
+    channel = bot.get_channel(CHANNEL_ID)
+    closed_votes = await close_pending_votes_for_manual_generation(channel)
+    if closed_votes:
+        await send_split(ctx, "🧪 **Votos abiertos cerrados antes de generar el día:**\n" + "\n".join(closed_votes))
+
     clean_text, display_text, title, level_ups = await generate_next_day()
 
     # Enviar historia (maneja +2000 chars)
@@ -822,7 +879,6 @@ async def generar_dia(ctx):
         file=discord.File(pdf_path)
     )
 
-    channel = bot.get_channel(CHANNEL_ID)
     if channel:
         await publish_critical_decision(channel, day, clean_text)
         await publish_ability_votes(channel, day, level_ups)
