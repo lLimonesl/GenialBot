@@ -191,7 +191,11 @@ async def publish_ability_votes(channel, day, level_ups):
         msg = f"⬆️ **NUEVA HABILIDAD DISPONIBLE (Día {day})**\n"
         msg += f"{character_name} ha subido de nivel. ¿Qué habilidad desbloquea?\n"
         for i, option in enumerate(options):
-            msg += f"{emojis[i]} {option}\n"
+            if ":" in option and option != "Ninguna":
+                name, description = option.split(":", 1)
+                msg += f"{emojis[i]} **{name.strip()}**: {description.strip()}\n"
+            else:
+                msg += f"{emojis[i]} {option}\n"
 
         poll = await channel.send(msg)
         vote_id = await create_vote(

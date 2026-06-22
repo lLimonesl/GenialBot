@@ -57,6 +57,23 @@ METADATA_LINE_RE = re.compile(
     rf"^\s*(?:[-*>`]+\s*)?\[({'|'.join(METADATA_TAGS)})\]\s*(.*)$"
 )
 
+PROMPT_LEAK_HEADINGS = (
+    "REGLAS DEL MUNDO:",
+    "ESTACIÓN Y CLIMA PERSISTENTE:",
+    "HISTORIA ANTERIOR:",
+    "EVENTOS CLAVE ACTIVOS:",
+    "CONSECUENCIAS VISIBLES DE VOTACIONES:",
+    "COMERCIO RECIENTE ENTRE REINOS:",
+    "REGLAS DE PROGRESIÓN:",
+    "REGLAS DE PODER:",
+    "PERSONAJES VIVOS:",
+    "ARCOS ACTIVOS:",
+    "INVENTARIO ACTUAL:",
+    "NPCS ACTIVOS:",
+    "DECISIONES DEL PUBLICO:",
+    "FORMATO DE METADATOS:",
+)
+
 async def generate_next_day():
     current_day, rules = await get_world_state()
     characters = await get_full_characters()
@@ -173,6 +190,9 @@ Narrador omnisciente.
 Escribe el Día {current_day + 1}.
 No repitas eventos.
 Las consecuencias son permanentes.
+No copies ni resumas las secciones de contexto del prompt.
+No incluyas encabezados como PERSONAJES VIVOS, REGLAS DE PODER, INVENTARIO ACTUAL, NPCS ACTIVOS o DECISIONES DEL PUBLICO en la respuesta final.
+La respuesta final debe contener solo la narración del día y, al final, los metadatos con tags si aplican.
 
 FORMATO DE METADATOS:
 Si ocurre algo relevante, añade al final del texto líneas con estos formatos exactos.
@@ -195,11 +215,17 @@ No uses estos tags dentro de la narración normal.
 
     response = client.chat.completions.create(
         model="gpt-4o-mini",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[
+            {
+                "role": "system",
+                "content": "Eres un narrador. El contexto recibido es privado y nunca debe aparecer copiado en la respuesta."
+            },
+            {"role": "user", "content": prompt}
+        ],
         temperature=0.7
     )
 
-    text = response.choices[0].message.content
+    text = strip_prompt_leaks(response.choices[0].message.content)
     metadata = extract_metadata(text)
     clean_text = strip_metadata_tags(text)
 
@@ -320,6 +346,7 @@ async def suggest_abilities_for_level_up(character_name: str):
         return []
     prompt = f"""
 Sugiere exactamente 3 habilidades desbloqueables para este personaje.
+Cada opción debe tener nombre y una descripción breve de 1 frase.
 Deben ser coherentes con su raza, nivel, habilidades actuales, pasivas y estilo.
 No contradigas sus limitaciones ni inventes poderes excesivos.
 
@@ -331,7 +358,8 @@ Pasivas: {character['passives']}
 Arma: {character['weapon']}
 Movimiento final: {character['final_move']}
 
-Responde solo en JSON: {{"abilities": ["habilidad 1", "habilidad 2", "habilidad 3"]}}
+Responde solo en JSON con este formato exacto:
+{{"abilities": [{{"name": "Nombre", "description": "Descripción breve"}}, {{"name": "Nombre", "description": "Descripción breve"}}, {{"name": "Nombre", "description": "Descripción breve"}}]}}
 """
     response = client.chat.completions.create(
         model="gpt-4o-mini",
@@ -344,7 +372,23 @@ Responde solo en JSON: {{"abilities": ["habilidad 1", "habilidad 2", "habilidad 
         if content.startswith("```"):
             content = content.strip("`").replace("json\n", "", 1).strip()
         data = json.loads(content)
-        return [a for a in data.get("abilities", []) if isinstance(a, str)][:3]
+        abilities = []
+        for ability in data.get("abilities", []):
+            if isinstance(ability, str):
+                abilities.append(ability.strip())
+                continue
+
+            if not isinstance(ability, dict):
+                continue
+
+            name = str(ability.get("name") or "").strip()
+            description = str(ability.get("description") or "").strip()
+            if not name:
+                continue
+
+            abilities.append(f"{name}: {description}" if description else name)
+
+        return abilities[:3]
     except Exception:
         return []
 
@@ -421,6 +465,25 @@ def strip_metadata_tags(text: str):
             continue
         clean_lines.append(line)
     return "\n".join(clean_lines).strip()
+
+def strip_prompt_leaks(text: str):
+    lines = text.splitlines()
+
+    for index, line in enumerate(lines):
+        normalized = line.strip().upper()
+        if normalized not in PROMPT_LEAK_HEADINGS:
+            continue
+
+        cut_index = index
+        previous = index - 1
+        while previous >= 0 and not lines[previous].strip():
+            previous -= 1
+        if previous >= 0 and lines[previous].strip().lower() in ("eventos clave:", "contexto:", "prompt:"):
+            cut_index = previous
+
+        return "\n".join(lines[:cut_index]).strip()
+
+    return text.strip()
 
 def append_metadata_summary(text: str, metadata: dict):
     sections = []
