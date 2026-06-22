@@ -9,7 +9,6 @@ from database import (
     apply_level_ups,
     get_active_arcs,
     get_closed_votes,
-    get_current_pov,
     save_day,
     save_quotes,
     apply_inventory_changes,
@@ -50,7 +49,6 @@ async def generate_next_day():
     characters = await get_full_characters()
     arcs = await get_active_arcs()
     votes = await get_closed_votes()
-    pov = await get_current_pov()
     inventory = await get_inventory_for_prompt()
     npcs = await get_npcs()
 
@@ -88,12 +86,6 @@ async def generate_next_day():
         for v in votes
     )
 
-    pov_text = (
-        f"POV actual: {pov}. Narración limitada a su percepción."
-        if pov else
-        "Narrador omnisciente."
-    )
-
     prompt = f"""
 Eres el narrador de una historia isekai seria y coherente.
 
@@ -127,7 +119,7 @@ NPCS ACTIVOS:
 DECISIONES DEL PUBLICO:
 {vote_text}
 
-{pov_text}
+Narrador omnisciente.
 
 Escribe el Día {current_day + 1}.
 No repitas eventos.
@@ -186,7 +178,8 @@ No uses estos tags dentro de la narración normal.
     for character_name, arc_name, amount in metadata["arc_progress"]:
         await update_arc_progress(character_name, arc_name, amount)
 
-    return append_metadata_summary(clean_text, metadata), f"Día {new_day}"
+    display_text = append_metadata_summary(clean_text, metadata)
+    return clean_text, display_text, f"Día {new_day}"
 
 async def detect_critical_decision(text: str):
     """

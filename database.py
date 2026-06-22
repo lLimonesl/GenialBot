@@ -69,21 +69,14 @@ async def init_db():
             result TEXT,
             status TEXT,
             source TEXT,
+            message_id BIGINT,
             created_at TIMESTAMP DEFAULT NOW()
         );
         """)
 
         await conn.execute("ALTER TABLE votes ADD COLUMN IF NOT EXISTS source TEXT")
+        await conn.execute("ALTER TABLE votes ADD COLUMN IF NOT EXISTS message_id BIGINT")
         await conn.execute("ALTER TABLE votes ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()")
-
-        await conn.execute("""
-        CREATE TABLE IF NOT EXISTS pov_state (
-            id INTEGER PRIMARY KEY CHECK (id = 1),
-            current_character_id INTEGER REFERENCES characters(id)
-        );
-        """)
-
-        await conn.execute("ALTER TABLE pov_state ADD COLUMN IF NOT EXISTS current_character_id INTEGER REFERENCES characters(id)")
 
         await conn.execute("""
         CREATE TABLE IF NOT EXISTS quotes (
@@ -153,13 +146,6 @@ async def init_db():
             ON CONFLICT (id) DO NOTHING
         """)
 
-        # Inicializar POV
-        await conn.execute("""
-            INSERT INTO pov_state (id, current_character_id)
-            VALUES (1, NULL)
-            ON CONFLICT (id) DO NOTHING
-        """)
-
 # ---------- WORLD ----------
 
 async def get_world_state():
@@ -169,13 +155,6 @@ async def get_world_state():
             "SELECT current_day, rules FROM world WHERE id = 1"
         )
         return row["current_day"], row["rules"]
-
-async def increment_day():
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute(
-            "UPDATE world SET current_day = current_day + 1 WHERE id = 1"
-        )
 
 # ---------- CHARACTERS ----------
 
@@ -288,6 +267,17 @@ async def create_character_arc(character_name, arc_name, arc_goal):
         if not character_id:
             return False
 
+        existing = await conn.fetchval("""
+            SELECT id
+            FROM character_arcs
+            WHERE character_id = $1
+              AND arc_name = $2
+              AND arc_status = 'active'
+        """, character_id, arc_name)
+
+        if existing:
+            return False
+
         await conn.execute("""
             INSERT INTO character_arcs (character_id, arc_name, arc_goal, arc_status, arc_progress)
             VALUES ($1, $2, $3, 'active', 0)
@@ -313,19 +303,6 @@ async def update_arc_progress(character_name, arc_name, amount):
               AND arc_status = 'active'
         """, amount, character_id, arc_name)
         return True
-
-# ---------- POV ----------
-
-async def get_current_pov():
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("""
-            SELECT c.name
-            FROM pov_state p
-            JOIN characters c ON c.id = p.current_character_id
-            WHERE p.id = 1
-        """)
-        return row["name"] if row else None
 
 # ---------- HISTORIAL / STATS ----------
 
@@ -476,7 +453,7 @@ async def get_inventory(name: str):
             JOIN characters c ON c.id = i.character_id
             WHERE c.name ILIKE $1
             ORDER BY i.item_name
-        """, f"%{name}%")
+        """, name)
 
 async def get_inventory_for_prompt():
     pool = await get_pool()
@@ -534,7 +511,7 @@ async def get_reputation(name: str):
             JOIN characters c ON c.id = r.character_id
             WHERE c.name ILIKE $1
             ORDER BY r.fame_level DESC
-        """, f"%{name}%")
+        """, name)
 
 async def get_character_locations():
     pool = await get_pool()
@@ -604,7 +581,7 @@ async def get_npc(name: str):
             SELECT name, race, role, kingdom, description, status, first_appearance_day, last_appearance_day, notes
             FROM npcs
             WHERE name ILIKE $1
-        """, f"%{name}%")
+        """, name)
 
 # ---------- BATTLES ----------
 
@@ -639,49 +616,30 @@ async def get_battles(name=None, limit=5):
             LIMIT $1
         """, limit)
     
-# ---------- SET POV ----------
-
-async def set_pov(name: str | None):
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        if name is None:
-            await conn.execute(
-                "UPDATE pov_state SET current_character_id = NULL WHERE id = 1"
-            )
-            return
-
-        row = await conn.fetchrow(
-            "SELECT id FROM characters WHERE name = $1",
-            name
-        )
-
-        if not row:
-            return False
-
-        await conn.execute("""
-            INSERT INTO pov_state (id, current_character_id)
-            VALUES (1, $1)
-            ON CONFLICT (id)
-            DO UPDATE SET current_character_id = $1
-        """, row["id"])
-
-    return True
-
-
 # ---------- VOTES ----------
 
 async def create_vote(day, question, options, source="ai"):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        await conn.execute("""
+        return await conn.fetchval("""
             INSERT INTO votes (day, question, options, status, source)
             VALUES ($1, $2, $3::jsonb, 'open', $4)
+            RETURNING id
         """,
         day,
         question,
         json.dumps(options),
         source
         )
+
+async def set_vote_message_id(vote_id: int, message_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            UPDATE votes
+            SET message_id = $1
+            WHERE id = $2
+        """, message_id, vote_id)
 
 async def get_current_day():
     pool = await get_pool()
@@ -766,7 +724,7 @@ async def get_open_votes_older_than(hours: int):
     pool = await get_pool()
     async with pool.acquire() as conn:
         return await conn.fetch("""
-            SELECT id, question, options
+            SELECT id, question, options, message_id
             FROM votes
             WHERE status = 'open'
               AND created_at <= NOW() - ($1 * INTERVAL '1 hour')
@@ -787,13 +745,15 @@ async def reset_world_progress():
         await conn.execute("DELETE FROM battle_logs")
 
         await conn.execute("""
-            UPDATE world
-            SET current_day = 0
-            WHERE id = 1
+            UPDATE characters
+            SET status = 'Vivo',
+                level = 1,
+                current_kingdom = NULL,
+                notes = NULL
         """)
 
         await conn.execute("""
-            UPDATE pov_state
-            SET current_character_id = NULL
+            UPDATE world
+            SET current_day = 0
             WHERE id = 1
         """)

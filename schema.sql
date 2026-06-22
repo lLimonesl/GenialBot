@@ -49,12 +49,8 @@ CREATE TABLE IF NOT EXISTS votes (
     result TEXT,
     status TEXT,
     source TEXT,
+    message_id BIGINT,
     created_at TIMESTAMP DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS pov_state (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    current_character_id INTEGER REFERENCES characters(id)
 );
 
 CREATE TABLE IF NOT EXISTS quotes (

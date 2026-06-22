@@ -10,9 +10,7 @@ from database import get_characters
 from database import get_active_arcs
 from database import kill_character
 from database import create_vote, get_current_day
-from database import get_open_votes_older_than, close_vote
-from database import get_current_pov
-from database import set_pov
+from database import get_open_votes_older_than, close_vote, set_vote_message_id
 from database import reset_world_progress
 from database import get_character_stats, get_day_log, search_logs_by_character
 from database import get_inventory, get_quotes, get_reputation, get_character_locations
@@ -109,7 +107,6 @@ async def send_commands_help(ctx):
 • `!inventario <personaje>` - Inventario actual
 • `!mapa` - Ubicación actual de personajes
 • `!fama <personaje>` - Reputación por reino
-• `!pov` - Muestra el POV actual
 
 **Mundo**
 • `!arcos` - Arcos activos
@@ -124,8 +121,6 @@ async def send_commands_help(ctx):
 
 **Administración**
 • `!matar <nombre> [causa]` - Muerte permanente (admin)
-• `!setpov <nombre>` - Fija POV (admin)
-• `!clearpov` - Limpia POV (admin)
 • `!resetear_mundo` - Reinicia progreso narrativo (admin)
 • `!dbtest` - Prueba conexión PostgreSQL
 """.strip()
@@ -134,9 +129,14 @@ async def send_commands_help(ctx):
 async def count_reactions(message):
     results = {}
     for reaction in message.reactions:
-        if reaction.emoji in ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]:
+        if reaction.emoji in ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]:
             results[str(reaction.emoji)] = reaction.count - 1
     return results
+
+def decode_vote_options(options):
+    if isinstance(options, str):
+        return json.loads(options)
+    return options
 
 async def publish_critical_decision(channel, day, texto):
     decision = await detect_critical_decision(texto)
@@ -148,16 +148,16 @@ async def publish_critical_decision(channel, day, texto):
     if len(options) < 2:
         return
 
-    await create_vote(day, decision["question"], options)
-
     msg = f"🗳️ **DECISIÓN CRÍTICA (Día {day})**\n"
     msg += decision["question"] + "\n"
 
-    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
+    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
     for i, opt in enumerate(options):
         msg += f"{emojis[i]} {opt}\n"
 
     poll = await channel.send(msg)
+    vote_id = await create_vote(day, decision["question"], options, source="ai")
+    await set_vote_message_id(vote_id, poll.id)
 
     for i in range(len(options)):
         await poll.add_reaction(emojis[i])
@@ -170,27 +170,44 @@ async def close_votes_task():
         return
 
     channel = bot.get_channel(CHANNEL_ID)
-    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣"]
+    if not channel:
+        return
+
+    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
 
     for vote in votes:
-        async for message in channel.history(limit=50):
-            if vote["question"] in message.content:
-                counts = await count_reactions(message)
+        if vote["message_id"]:
+            try:
+                message = await channel.fetch_message(vote["message_id"])
+            except discord.NotFound:
+                message = None
+        else:
+            message = None
+            async for candidate in channel.history(limit=200):
+                if vote["question"] in candidate.content:
+                    message = candidate
+                    break
 
-                if not counts:
-                    result = "Sin votos"
-                else:
-                    winner = max(counts, key=counts.get)
-                    index = emojis.index(winner)
-                    result = vote["options"][index]
+        if not message:
+            continue
 
-                await close_vote(vote["id"], result)
+        counts = await count_reactions(message)
 
-                await channel.send(
-                    f"🗳️ **VOTACIÓN CERRADA**\n"
-                    f"Pregunta: {vote['question']}\n"
-                    f"Resultado: **{result}**"
-                )
+        if not counts or max(counts.values()) <= 0:
+            result = "Sin votos"
+        else:
+            options = decode_vote_options(vote["options"])
+            winner = max(counts, key=counts.get)
+            index = emojis.index(winner)
+            result = options[index]
+
+        await close_vote(vote["id"], result)
+
+        await channel.send(
+            f"🗳️ **VOTACIÓN CERRADA**\n"
+            f"Pregunta: {vote['question']}\n"
+            f"Resultado: **{result}**"
+        )
 
 @bot.event
 async def on_ready():
@@ -206,17 +223,17 @@ async def on_ready():
 
 @tasks.loop(hours=24)
 async def daily_story_task():
-    texto, title = await generate_next_day()
+    clean_text, display_text, title = await generate_next_day()
 
     # Enviar historia
-    await send_long_message(CHANNEL_ID, f"**{title}**\n{texto}")
+    await send_long_message(CHANNEL_ID, f"**{title}**\n{display_text}")
 
     # Día actual
     day = await get_current_day()
 
     # Exportar PDF
     from pdf_exporter import export_day_to_pdf
-    pdf_path = export_day_to_pdf(day, title, texto)
+    pdf_path = export_day_to_pdf(day, title, clean_text)
 
     channel = bot.get_channel(CHANNEL_ID)
 
@@ -226,7 +243,7 @@ async def daily_story_task():
         file=discord.File(pdf_path)
     )
 
-    await publish_critical_decision(channel, day, texto)
+    await publish_critical_decision(channel, day, clean_text)
 
 
 # Comando de prueba
@@ -440,8 +457,11 @@ async def votar(ctx, *, pregunta_opciones: str):
     question = parts[0]
     options = parts[1:]
 
+    if len(options) > 5:
+        await ctx.send("Máximo 5 opciones por votación.")
+        return
+
     day = await get_current_day()
-    await create_vote(day, question, options)
 
     emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
     msg = f"🗳️ **VOTACIÓN ABIERTA (Día {day})**\n{question}\n"
@@ -450,6 +470,8 @@ async def votar(ctx, *, pregunta_opciones: str):
         msg += f"{emojis[i]} {opt}\n"
 
     poll = await ctx.send(msg)
+    vote_id = await create_vote(day, question, options, source="manual")
+    await set_vote_message_id(vote_id, poll.id)
 
     for i in range(len(options)):
         await poll.add_reaction(emojis[i])
@@ -459,14 +481,6 @@ async def votar(ctx, *, pregunta_opciones: str):
 async def cerrar_votacion(ctx, vote_id: int, *, resultado: str):
     await close_vote(vote_id, resultado)
     await ctx.send(f"✅ Votación {vote_id} cerrada.\nResultado: {resultado}")
-
-@bot.command()
-async def pov(ctx):
-    pov = await get_current_pov()
-    if pov:
-        await ctx.send(f"👁️ POV actual: **{pov}**")
-    else:
-        await ctx.send("👁️ POV actual: Narrador omnisciente")
 
 @bot.command()
 async def dbtest(ctx):
@@ -479,18 +493,6 @@ async def dbtest(ctx):
 
 @bot.command()
 @commands.has_permissions(administrator=True)
-async def setpov(ctx, nombre: str):
-    await set_pov(nombre)
-    await ctx.send(f"👁️ POV fijado en **{nombre}**")
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def clearpov(ctx):
-    await set_pov(None)
-    await ctx.send("👁️ POV restablecido a narrador omnisciente")
-
-@bot.command()
-@commands.has_permissions(administrator=True)
 async def resetear_mundo(ctx):
     await reset_world_progress()
     await ctx.send(
@@ -498,23 +500,24 @@ async def resetear_mundo(ctx):
         "• Día vuelto a 0\n"
         "• Historia borrada\n"
         "• Votaciones borradas\n"
-        "• POV reiniciado\n"
-        "Los personajes y reglas permanecen intactos."
+        "• Inventario, fama, NPCs, combates y arcos borrados\n"
+        "• Personajes restaurados a vivos, nivel 1 y sin ubicación actual\n"
+        "Las reglas del mundo permanecen intactas."
     )
 
 @bot.command()
 async def generar_dia(ctx):
-    texto, title = await generate_next_day()
+    clean_text, display_text, title = await generate_next_day()
 
     # Enviar historia (maneja +2000 chars)
-    await send_long_message(CHANNEL_ID, f"**{title}**\n{texto}")
+    await send_long_message(CHANNEL_ID, f"**{title}**\n{display_text}")
 
     # Obtener día actual (ya incrementado)
     day = await get_current_day()
 
     # Exportar a PDF
     from pdf_exporter import export_day_to_pdf
-    pdf_path = export_day_to_pdf(day, title, texto)
+    pdf_path = export_day_to_pdf(day, title, clean_text)
 
     # Enviar PDF
     await ctx.send(
@@ -524,7 +527,7 @@ async def generar_dia(ctx):
 
     channel = bot.get_channel(CHANNEL_ID)
     if channel:
-        await publish_critical_decision(channel, day, texto)
+        await publish_critical_decision(channel, day, clean_text)
 
 
 bot.run(TOKEN)
