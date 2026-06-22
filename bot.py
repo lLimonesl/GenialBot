@@ -5,7 +5,7 @@ import asyncio
 import discord
 from discord.ext import commands, tasks
 from database import init_db
-from story_engine import generate_next_day, detect_critical_decision, suggest_abilities_for_level_up
+from story_engine import generate_next_day, detect_critical_decision, suggest_abilities_for_level_up, suggest_vote_consequence
 from dotenv import load_dotenv
 from db import get_pool
 from database import get_characters
@@ -20,6 +20,7 @@ from database import get_npcs, get_npc, get_battles
 from database import get_power_ranking, record_consequence, get_votes, get_active_key_events
 from database import get_quotes_for_day, create_ability_unlock_vote, apply_unlocked_ability, get_vote
 from database import trade_item, get_recent_trades
+from database import get_world_statistics
 from pdf_exporter import export_day_to_pdf
 
 # Cargar variables de entorno
@@ -50,8 +51,15 @@ RAW_METADATA_PREFIXES = (
     "[BATTLE]",
     "[LEVEL_UP]",
     "[KEY_EVENT]",
-    "[SEASON]"
+    "[SEASON]",
+    "[LEGEND]"
 )
+
+def truncate_text(text, limit=1024):
+    text = str(text or "N/A")
+    if len(text) <= limit:
+        return text
+    return text[:limit - 3].rstrip() + "..."
 
 def hide_raw_metadata_tags(text):
     lines = []
@@ -153,6 +161,7 @@ async def send_commands_help(ctx):
 • `!personajes` - Lista personajes vivos
 • `!stats <personaje>` - Perfil, nivel, equipo, arcos, fama y combates
 • `!ranking` - Marcador de poder por nivel, fama y victorias
+• `!estadisticas_mundo` - Resumen global del estado del mundo
 • `!inventario <personaje>` - Inventario actual
 • `!mapa` - Ubicación actual de personajes
 • `!fama <personaje>` - Reputación por reino
@@ -173,6 +182,7 @@ async def send_commands_help(ctx):
 • `!cerrar_votacion <id> <resultado>` - Cierra una votación (admin)
 • `!votaciones [abiertas|cerradas]` - Lista votaciones
 • `!consecuencia <id> <texto>` - Guarda consecuencia visible (admin)
+• `!consecuencia_automatica <id>` - Sugiere y guarda consecuencia visible con IA (admin)
 
 **Administración**
 • `!matar <nombre> [causa]` - Muerte permanente (admin)
@@ -511,34 +521,25 @@ async def stats(ctx, *, nombre: str):
         return
 
     c = data["character"]
-    msg = f"**Stats de {c['name']}**\n"
-    msg += f"Raza: {c['race']} | Estado: {c['status']} | Nivel: {c['level']}\n"
-    msg += f"Estatus social: {c['social_status']}\n"
-    msg += f"Ubicación: {c['current_kingdom'] or 'Desconocida'}\n"
-    msg += f"Arma inicial: {c['weapon'] or 'N/A'}\n"
-    msg += f"Amuleto inicial: {c['amulet'] or 'N/A'}\n"
-    msg += f"Mascota: {format_json_value(c['pet'])}\n"
-    msg += f"Habilidades: {format_json_value(c['abilities'])}\n"
-    msg += f"Pasivas: {format_json_value(c['passives'])}\n"
-    msg += f"Movimiento final: {format_json_value(c['final_move'])}\n"
-    msg += f"Combates registrados: {data['battle_count']}\n"
+    embed = discord.Embed(title=f"Stats de {c['name']}", color=discord.Color.blurple())
+    embed.add_field(name="Base", value=truncate_text(f"Raza: {c['race']}\nEstado: {c['status']}\nNivel: {c['level']}\nEstatus: {c['social_status']}\nUbicación: {c['current_kingdom'] or 'Desconocida'}"), inline=False)
+    embed.add_field(name="Equipo", value=truncate_text(f"Arma: {c['weapon'] or 'N/A'}\nAmuleto: {c['amulet'] or 'N/A'}\nMascota: {format_json_value(c['pet'])}"), inline=False)
+    embed.add_field(name="Poderes", value=truncate_text(f"Habilidades: {format_json_value(c['abilities'])}\nPasivas: {format_json_value(c['passives'])}\nMovimiento final: {format_json_value(c['final_move'])}"), inline=False)
+    embed.add_field(name="Combates", value=str(data["battle_count"]), inline=True)
 
     if data["arcs"]:
-        msg += "\n**Arcos:**\n"
-        for arc in data["arcs"][:5]:
-            msg += f"• {arc['arc_name']} ({arc['arc_status']}, {arc['arc_progress']}%): {arc['arc_goal']}\n"
+        value = "\n".join(f"• {arc['arc_name']} ({arc['arc_status']}, {arc['arc_progress']}%): {arc['arc_goal']}" for arc in data["arcs"][:5])
+        embed.add_field(name="Arcos", value=truncate_text(value), inline=False)
 
     if data["items"]:
-        msg += "\n**Inventario:**\n"
-        for item in data["items"][:8]:
-            msg += f"• {item['item_name']} x{item['quantity']} ({item['item_type'] or 'sin tipo'})\n"
+        value = "\n".join(f"• {item['item_name']} x{item['quantity']} ({item['item_type'] or 'sin tipo'})" for item in data["items"][:8])
+        embed.add_field(name="Inventario", value=truncate_text(value), inline=False)
 
     if data["reputation"]:
-        msg += "\n**Fama:**\n"
-        for rep in data["reputation"][:5]:
-            msg += f"• {rep['kingdom']}: {rep['fame_level']}\n"
+        value = "\n".join(f"• {rep['kingdom']}: {rep['fame_level']}" for rep in data["reputation"][:5])
+        embed.add_field(name="Fama", value=truncate_text(value), inline=False)
 
-    await send_split(ctx, msg)
+    await ctx.send(embed=embed)
 
 @bot.command()
 async def ranking(ctx):
@@ -547,15 +548,15 @@ async def ranking(ctx):
         await ctx.send("No hay personajes vivos para rankear.")
         return
 
-    msg = "**Marcador de poder**\n"
-    for i, row in enumerate(rows, start=1):
+    embed = discord.Embed(title="Marcador de poder", color=discord.Color.gold())
+    for i, row in enumerate(rows[:15], start=1):
         location = row["current_kingdom"] or "ubicación desconocida"
-        msg += (
-            f"{i}. **{row['name']}** ({row['race']}) - "
-            f"Nivel {row['level']} | Fama {row['total_fame']} | "
-            f"Victorias {row['wins']} | {location}\n"
+        embed.add_field(
+            name=f"{i}. {row['name']} ({row['race']})",
+            value=f"Nivel {row['level']} | Fama {row['total_fame']} | Victorias {row['wins']} | {location}",
+            inline=False
         )
-    await send_split(ctx, msg)
+    await ctx.send(embed=embed)
 
 @bot.command()
 async def historial(ctx, *args):
@@ -610,18 +611,21 @@ async def citas(ctx, *, nombre: str = None):
         await ctx.send("No hay citas registradas.")
         return
 
-    msg = "**Citas memorables:**\n"
-    for row in rows:
-        msg += f"• Día {row['day']} - {row['character_name']}: \"{row['quote']}\"\n"
-    await send_split(ctx, msg)
+    embed = discord.Embed(title="Citas memorables", color=discord.Color.pink())
+    for row in rows[:20]:
+        embed.add_field(name=f"Día {row['day']} — {row['character_name']}", value=f"\"{row['quote']}\"", inline=False)
+    await ctx.send(embed=embed)
 
 @bot.command()
 async def mapa(ctx):
     rows = await get_character_locations()
-    msg = "**Mapa actual:**\n"
+    if not rows:
+        await ctx.send("No hay personajes vivos registrados.")
+        return
+    embed = discord.Embed(title="Mapa actual", color=discord.Color.green())
     for row in rows:
-        msg += f"• {row['name']} ({row['race']}): {row['current_kingdom'] or 'Ubicación desconocida'}\n"
-    await send_split(ctx, msg)
+        embed.add_field(name=row['name'], value=f"{row['race']} — {row['current_kingdom'] or 'Ubicación desconocida'}", inline=True)
+    await ctx.send(embed=embed)
 
 @bot.command()
 async def fama(ctx, *, nombre: str):
@@ -643,10 +647,14 @@ async def npcs(ctx):
         await ctx.send("No hay NPCs activos registrados.")
         return
 
-    msg = "**NPCs activos:**\n"
-    for row in rows:
-        msg += f"• {row['name']} ({row['race'] or 'N/A'}) - {row['role'] or 'sin rol'} en {row['kingdom'] or 'ubicación desconocida'}\n"
-    await send_split(ctx, msg)
+    embed = discord.Embed(title="NPCs activos", color=discord.Color.green())
+    for row in rows[:20]:
+        embed.add_field(
+            name=f"{row['name']} ({row['race'] or 'N/A'})",
+            value=truncate_text(f"{row['role'] or 'sin rol'} en {row['kingdom'] or 'ubicación desconocida'}", 300),
+            inline=False
+        )
+    await ctx.send(embed=embed)
 
 @bot.command()
 async def npc(ctx, *, nombre: str):
@@ -669,12 +677,12 @@ async def combates(ctx, *, nombre: str = None):
         await ctx.send("No hay combates registrados.")
         return
 
-    msg = "**Combates registrados:**\n"
-    for row in rows:
+    embed = discord.Embed(title="Combates registrados", color=discord.Color.red())
+    for row in rows[:10]:
         participants = format_json_value(row['participants'])
         enemies = format_json_value(row['enemies'])
-        msg += f"• Día {row['day']} | {row['outcome']}\nParticipantes: {participants}\nEnemigos: {enemies}\n{row['summary']}\n"
-    await send_split(ctx, msg)
+        embed.add_field(name=f"Día {row['day']} — {row['outcome']}", value=truncate_text(f"Participantes: {participants}\nEnemigos: {enemies}\n{row['summary']}", 500), inline=False)
+    await ctx.send(embed=embed)
 
 @bot.command()
 async def comerciar(ctx, *, datos: str):
@@ -718,10 +726,10 @@ async def arcos(ctx):
         await ctx.send("No hay arcos activos.")
         return
 
-    msg = "**Arcos activos:**\n"
+    embed = discord.Embed(title="Arcos activos", color=discord.Color.purple())
     for row in arcs:
-        msg += f"• {row['name']}: {row['arc_name']} ({row['arc_progress']}%)\n"
-    await send_split(ctx, msg)
+        embed.add_field(name=f"{row['name']}", value=f"{row['arc_name']} ({row['arc_progress']}%)", inline=False)
+    await ctx.send(embed=embed)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -824,6 +832,24 @@ async def consecuencia(ctx, vote_id: int, *, texto: str):
     await ctx.send(f"✅ Consecuencia registrada para votación {vote_id}.")
 
 @bot.command()
+@commands.has_permissions(administrator=True)
+async def consecuencia_automatica(ctx, vote_id: int):
+    vote = await get_vote(vote_id)
+    if not vote or vote["status"] != "closed":
+        await ctx.send("No encontré esa votación cerrada.")
+        return
+    if not vote["result"] or is_non_choice_result(vote["result"]):
+        await ctx.send("Esa votación no tiene un resultado útil para generar consecuencia.")
+        return
+
+    consequence = await suggest_vote_consequence(vote["question"], vote["result"])
+    ok = await record_consequence(vote_id, consequence)
+    if not ok:
+        await ctx.send("No pude guardar la consecuencia generada.")
+        return
+    await ctx.send(f"✅ Consecuencia automática registrada para votación {vote_id}:\n{consequence}")
+
+@bot.command()
 async def votaciones(ctx, estado: str = None):
     status = None
     if estado in ("abiertas", "open"):
@@ -850,10 +876,27 @@ async def eventos(ctx):
         await ctx.send("No hay eventos clave activos registrados.")
         return
 
-    msg = "**Eventos clave activos:**\n"
+    embed = discord.Embed(title="Eventos clave activos", color=discord.Color.orange())
     for row in rows:
-        msg += f"• Día {row['day']} [{row['event_type']}] {row['title'] or 'Evento'}: {row['description']}\n"
-    await send_split(ctx, msg)
+        embed.add_field(name=f"Día {row['day']} [{row['event_type']}]", value=truncate_text(f"{row['title'] or 'Evento'}: {row['description']}", 500), inline=False)
+    await ctx.send(embed=embed)
+
+@bot.command()
+async def estadisticas_mundo(ctx):
+    stats = await get_world_statistics()
+    embed = discord.Embed(title="Estadísticas del mundo", color=discord.Color.teal())
+    embed.add_field(name="Día actual", value=str(stats["current_day"]), inline=True)
+    embed.add_field(name="Días guardados", value=str(stats["total_days"]), inline=True)
+    embed.add_field(name="Combates", value=str(stats["total_battles"]), inline=True)
+    embed.add_field(name="Citas", value=str(stats["total_quotes"]), inline=True)
+    embed.add_field(name="NPCs", value=str(stats["total_npcs"]), inline=True)
+    embed.add_field(name="Muertes", value=str(stats["total_deaths"]), inline=True)
+    embed.add_field(name="Arcos activos", value=str(stats["active_arcs"]), inline=True)
+    embed.add_field(name="Arcos completados", value=str(stats["completed_arcs"]), inline=True)
+    embed.add_field(name="Personajes vivos", value=str(stats["alive_characters"]), inline=True)
+    embed.add_field(name="Personajes muertos", value=str(stats["dead_characters"]), inline=True)
+    embed.add_field(name="Leyendas activas", value=str(stats["active_legends"]), inline=True)
+    await ctx.send(embed=embed)
 
 @bot.command()
 async def dbtest(ctx):
@@ -879,8 +922,9 @@ async def resetear_mundo(ctx):
         "• Historia borrada\n"
         "• Votaciones borradas\n"
         "• Inventario, fama, NPCs, combates y arcos borrados\n"
+        "• Leyendas enemigas y progresión histórica borradas\n"
         "• Personajes restaurados a vivos, nivel 1 y sin ubicación actual\n"
-        "Las reglas del mundo permanecen intactas."
+        "Las reglas del mundo volvieron a su estado base."
     )
 
 @bot.command()

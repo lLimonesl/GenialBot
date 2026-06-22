@@ -199,6 +199,32 @@ async def init_db():
         );
         """)
 
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS legends (
+            id SERIAL PRIMARY KEY,
+            name TEXT UNIQUE NOT NULL,
+            power_level TEXT,
+            kingdom TEXT,
+            status TEXT NOT NULL DEFAULT 'Active',
+            description TEXT,
+            first_appearance_day INTEGER,
+            last_appearance_day INTEGER,
+            notes TEXT
+        );
+        """)
+
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS character_progression (
+            id SERIAL PRIMARY KEY,
+            day INTEGER NOT NULL,
+            character_id INTEGER REFERENCES characters(id) ON DELETE CASCADE,
+            character_name TEXT NOT NULL,
+            level INTEGER NOT NULL,
+            total_fame INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(day, character_id)
+        );
+        """)
+
         # Inicializar world
         await conn.execute("""
             INSERT INTO world (id, current_day, rules, hierarchy, meta)
@@ -319,6 +345,17 @@ async def add_key_event(day: int, event_type: str, title: str, description: str)
             VALUES ($1, $2, $3, $4, TRUE)
         """, day, event_type, title, description)
 
+async def append_world_rule_change(day: int, title: str, description: str):
+    if not description:
+        return
+    addition = f"\n\nCAMBIO DEL MUNDO (Día {day} - {title or 'Evento'}):\n{description.strip()}"
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE world SET rules = rules || $1 WHERE id = 1",
+            addition
+        )
+
 async def get_active_key_events(limit=25):
     pool = await get_pool()
     async with pool.acquire() as conn:
@@ -381,6 +418,179 @@ async def get_power_ranking():
             WHERE c.status != 'Muerto'
             ORDER BY c.level DESC, total_fame DESC, wins DESC, c.name
         """)
+
+async def get_world_statistics():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchrow("""
+            SELECT
+                (SELECT current_day FROM world WHERE id = 1) AS current_day,
+                (SELECT COUNT(*) FROM daily_logs) AS total_days,
+                (SELECT COUNT(*) FROM battle_logs) AS total_battles,
+                (SELECT COUNT(*) FROM quotes) AS total_quotes,
+                (SELECT COUNT(*) FROM npcs) AS total_npcs,
+                (SELECT COUNT(*) FROM key_events WHERE event_type = 'death') AS total_deaths,
+                (SELECT COUNT(*) FROM character_arcs WHERE arc_status = 'completed') AS completed_arcs,
+                (SELECT COUNT(*) FROM character_arcs WHERE arc_status = 'active') AS active_arcs,
+                (SELECT COUNT(*) FROM characters WHERE status != 'Muerto') AS alive_characters,
+                (SELECT COUNT(*) FROM characters WHERE status = 'Muerto') AS dead_characters,
+                (SELECT COUNT(*) FROM legends WHERE status = 'Active') AS active_legends
+        """)
+
+async def get_kingdoms_overview():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT kingdom FROM (
+                SELECT current_kingdom AS kingdom FROM characters WHERE current_kingdom IS NOT NULL
+                UNION SELECT kingdom FROM npcs WHERE kingdom IS NOT NULL
+                UNION SELECT kingdom FROM reputation WHERE kingdom IS NOT NULL
+                UNION SELECT destination_kingdom AS kingdom FROM trade_logs WHERE destination_kingdom IS NOT NULL
+                UNION SELECT origin_kingdom AS kingdom FROM trade_logs WHERE origin_kingdom IS NOT NULL
+                UNION SELECT kingdom FROM legends WHERE kingdom IS NOT NULL
+            ) kingdoms
+            ORDER BY kingdom
+        """)
+
+async def get_kingdom_detail(kingdom: str):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        characters = await conn.fetch("""
+            SELECT name, race, status, level
+            FROM characters
+            WHERE current_kingdom ILIKE $1
+            ORDER BY name
+        """, kingdom)
+        npcs = await conn.fetch("""
+            SELECT name, race, role, status, description
+            FROM npcs
+            WHERE kingdom ILIKE $1
+            ORDER BY status, name
+        """, kingdom)
+        reputation = await conn.fetch("""
+            SELECT c.name, r.fame_level, r.notes
+            FROM reputation r
+            JOIN characters c ON c.id = r.character_id
+            WHERE r.kingdom ILIKE $1
+            ORDER BY r.fame_level DESC, c.name
+        """, kingdom)
+        trades = await conn.fetch("""
+            SELECT day, character_name, origin_kingdom, destination_kingdom, item_name, notes
+            FROM trade_logs
+            WHERE origin_kingdom ILIKE $1 OR destination_kingdom ILIKE $1
+            ORDER BY id DESC
+            LIMIT 25
+        """, kingdom)
+        events = await conn.fetch("""
+            SELECT day, event_type, title, description
+            FROM key_events
+            WHERE title ILIKE '%' || $1 || '%' OR description ILIKE '%' || $1 || '%'
+            ORDER BY day DESC, id DESC
+            LIMIT 25
+        """, kingdom)
+        legends = await conn.fetch("""
+            SELECT name, power_level, status, description
+            FROM legends
+            WHERE kingdom ILIKE $1
+            ORDER BY status, name
+        """, kingdom)
+        return {
+            "characters": characters,
+            "npcs": npcs,
+            "reputation": reputation,
+            "trades": trades,
+            "events": events,
+            "legends": legends,
+        }
+
+async def get_timeline_events(limit=200):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT day, event_type, title, description, source_order
+            FROM (
+                SELECT day, 'day' AS event_type, title, summary AS description, 1 AS source_order FROM daily_logs
+                UNION ALL
+                SELECT day, 'battle' AS event_type, outcome AS title, summary AS description, 2 AS source_order FROM battle_logs
+                UNION ALL
+                SELECT day, event_type, title, description, 3 AS source_order FROM key_events
+                UNION ALL
+                SELECT 0 AS day, 'arc_completed' AS event_type, arc_name AS title, c.name || ': ' || COALESCE(arc_goal, '') AS description, 4 AS source_order
+                FROM character_arcs a JOIN characters c ON c.id = a.character_id
+                WHERE arc_status = 'completed'
+            ) events
+            ORDER BY day DESC, source_order, title
+            LIMIT $1
+        """, limit)
+
+async def record_character_progression(day: int):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            INSERT INTO character_progression (day, character_id, character_name, level, total_fame)
+            SELECT
+                $1,
+                c.id,
+                c.name,
+                c.level,
+                COALESCE(SUM(r.fame_level), 0) AS total_fame
+            FROM characters c
+            LEFT JOIN reputation r ON r.character_id = c.id
+            GROUP BY c.id, c.name, c.level
+            ON CONFLICT (day, character_id)
+            DO UPDATE SET level = EXCLUDED.level, total_fame = EXCLUDED.total_fame
+        """, day)
+
+async def get_character_progression():
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT day, character_name, level, total_fame
+            FROM character_progression
+            ORDER BY character_name, day
+        """)
+
+async def get_battle_detail(battle_id: int):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchrow("""
+            SELECT id, day, participants, enemies, outcome, summary
+            FROM battle_logs
+            WHERE id = $1
+        """, battle_id)
+
+async def get_all_legends(active_only=True):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if active_only:
+            return await conn.fetch("""
+                SELECT name, power_level, kingdom, status, description, first_appearance_day, last_appearance_day
+                FROM legends
+                WHERE status = 'Active'
+                ORDER BY name
+            """)
+        return await conn.fetch("""
+            SELECT name, power_level, kingdom, status, description, first_appearance_day, last_appearance_day
+            FROM legends
+            ORDER BY status, name
+        """)
+
+async def upsert_legends(legends, day):
+    if not legends:
+        return
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        for name, power_level, kingdom, status, description in legends:
+            await conn.execute("""
+                INSERT INTO legends (name, power_level, kingdom, status, description, first_appearance_day, last_appearance_day)
+                VALUES ($1, $2, $3, COALESCE(NULLIF($4, ''), 'Active'), $5, $6, $6)
+                ON CONFLICT (name)
+                DO UPDATE SET power_level = COALESCE(EXCLUDED.power_level, legends.power_level),
+                              kingdom = COALESCE(EXCLUDED.kingdom, legends.kingdom),
+                              status = COALESCE(EXCLUDED.status, legends.status),
+                              description = COALESCE(EXCLUDED.description, legends.description),
+                              last_appearance_day = EXCLUDED.last_appearance_day
+            """, name, power_level, kingdom, status, description, day)
 
 # ---------- CHARACTERS ----------
 
@@ -899,7 +1109,7 @@ async def get_battles(name=None, limit=5):
     async with pool.acquire() as conn:
         if name:
             return await conn.fetch("""
-                SELECT day, participants, enemies, outcome, summary
+                SELECT id, day, participants, enemies, outcome, summary
                 FROM battle_logs
                 WHERE participants::text ILIKE $1
                 ORDER BY id DESC
@@ -907,7 +1117,7 @@ async def get_battles(name=None, limit=5):
             """, f"%{name}%", limit)
 
         return await conn.fetch("""
-            SELECT day, participants, enemies, outcome, summary
+            SELECT id, day, participants, enemies, outcome, summary
             FROM battle_logs
             ORDER BY id DESC
             LIMIT $1
@@ -1149,7 +1359,9 @@ async def reset_world_progress():
                 battle_logs,
                 narrative_memory,
                 key_events,
-                trade_logs
+                trade_logs,
+                legends,
+                character_progression
             RESTART IDENTITY CASCADE
         """)
 
@@ -1184,7 +1396,10 @@ async def reset_world_progress():
         await conn.execute("""
             UPDATE world
             SET current_day = 0,
+                rules = $1,
+                hierarchy = $2::jsonb,
+                meta = $3::jsonb,
                 season = 'Primavera',
                 season_day = 0
             WHERE id = 1
-        """)
+        """, WORLD_RULES, json.dumps(SOCIAL_HIERARCHY), json.dumps(WORLD_META))

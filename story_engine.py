@@ -32,7 +32,11 @@ from database import (
     sync_world_season,
     get_character_by_name,
     get_recent_trades,
-    get_quotes
+    get_quotes,
+    get_all_legends,
+    upsert_legends,
+    append_world_rule_change,
+    record_character_progression
 )
 
 load_dotenv()
@@ -52,7 +56,8 @@ METADATA_TAGS = (
     "BATTLE",
     "LEVEL_UP",
     "KEY_EVENT",
-    "SEASON"
+    "SEASON",
+    "LEGEND"
 )
 METADATA_LINE_RE = re.compile(
     rf"^\s*(?:[-*>`]+\s*)?\[({'|'.join(METADATA_TAGS)})\]\s*(.*)$"
@@ -88,6 +93,7 @@ async def generate_next_day():
     consequences = await get_vote_consequences(limit=5)
     season = await get_season_context()
     trades = await get_recent_trades(limit=5)
+    legends = await get_all_legends(active_only=True)
     recent_days = await get_recent_full_days(limit=5)
     recent_focus = extract_recent_character_focus(recent_days, characters)
     recent_quotes = await get_quotes(limit=12)
@@ -146,6 +152,11 @@ async def generate_next_day():
         for t in trades
     ) or "Sin comercio reciente registrado."
 
+    legend_text = "\n".join(
+        f"- {l['name']} ({l['power_level'] or 'poder desconocido'}) en {l['kingdom'] or 'ubicación desconocida'} [{l['status']}]: {l['description'] or ''}"
+        for l in legends
+    ) or "Sin leyendas enemigas persistentes registradas."
+
     prompt = f"""
 Eres el narrador de una historia isekai seria y coherente.
 
@@ -167,6 +178,9 @@ CONSECUENCIAS VISIBLES DE VOTACIONES:
 COMERCIO RECIENTE ENTRE REINOS:
 {trade_text}
 
+LEYENDAS ENEMIGAS PERSISTENTES:
+{legend_text}
+
 REGLAS DE PROGRESIÓN:
 - NO asignes niveles directamente.
 - Cuando un personaje progresa, usa el formato exacto:
@@ -177,6 +191,7 @@ REGLAS DE PODER:
 - Las pasivas siempre están activas.
 - Los límites y restricciones deben respetarse.
 - No inventes nuevos poderes.
+- Si usas enemigos legendarios recurrentes, reutiliza LEYENDAS ENEMIGAS PERSISTENTES antes de inventar uno nuevo.
 - Los movimientos finales solo pueden usarse en situaciones extremas.
 
 PERSONAJES VIVOS:
@@ -225,6 +240,8 @@ No uses estos tags dentro de la narración normal.
 - Si narras una pelea, duelo, emboscada, combate, batalla o enfrentamiento físico/mágico, DEBES añadir una línea [BATTLE].
 - Si un personaje aprende, mejora, supera un límite, gana experiencia importante o progresa por combate/entrenamiento, DEBES añadir [LEVEL_UP].
 - Si una batalla cambia el equilibrio del mundo, deja heridos importantes, revela un enemigo o altera un reino, DEBES añadir también [KEY_EVENT].
+- Si aparece, cambia o queda establecida una leyenda enemiga recurrente, DEBES añadir [LEGEND].
+- Si un evento cambia una regla permanente del mundo, usa [KEY_EVENT] world_change|título|descripción.
 - [WEATHER] clima del día
 - [QUOTE] Personaje: "frase memorable"
 - [ITEM_GAIN] Personaje|Objeto|Tipo|Descripción
@@ -238,6 +255,7 @@ No uses estos tags dentro de la narración normal.
 - [BATTLE] participantes separados por coma|enemigos separados por coma|resultado|resumen breve
 - [LEVEL_UP] Personaje +1 niveles
 - [KEY_EVENT] tipo|título|descripción
+- [LEGEND] Nombre|Nivel/poder|Reino o ubicación|Estado|Descripción
 """
 
     response = client.chat.completions.create(
@@ -253,6 +271,7 @@ No uses estos tags dentro de la narración normal.
     )
 
     text = strip_prompt_leaks(response.choices[0].message.content)
+    text = await validate_and_repair_consistency(text, rules, char_text, key_event_text, legend_text)
     metadata = extract_metadata(text)
     metadata["quotes"] = filter_memorable_quotes(metadata["quotes"], recent_quotes)
     clean_text = strip_metadata_tags(text)
@@ -276,8 +295,10 @@ No uses estos tags dentro de la narración normal.
     await upsert_npcs(metadata["npcs_appear"], new_day)
     await mark_npcs_inactive(metadata["npcs_disappear"], new_day)
     await save_battles(new_day, metadata["battles"])
+    await upsert_legends(metadata["legends"], new_day)
     await record_narrative_memory(new_day, "daily", summary)
     await sync_world_season(new_day)
+    await record_character_progression(new_day)
 
     if new_day % 7 == 0:
         weekly_summary = await compress_week(new_day)
@@ -289,6 +310,8 @@ No uses estos tags dentro de la narración normal.
 
     for event_type, title, description in metadata["key_events"]:
         await add_key_event(new_day, event_type, title, description)
+        if event_type.strip().lower() == "world_change":
+            await append_world_rule_change(new_day, title, description)
 
     for character_name, arc_name, arc_goal in metadata["new_arcs"]:
         await create_character_arc(character_name, arc_name, arc_goal)
@@ -426,6 +449,44 @@ async def summarize_memory(content: str, instruction: str):
         temperature=0.2
     )
     return response.choices[0].message.content.strip()
+
+async def validate_and_repair_consistency(text: str, rules: str, characters: str, key_events: str, legends: str):
+    prompt = f"""
+Revisa esta narración antes de publicarla.
+
+REGLAS CANÓNICAS:
+{rules}
+
+PERSONAJES Y PODERES:
+{characters}
+
+EVENTOS ACTIVOS:
+{key_events}
+
+LEYENDAS PERSISTENTES:
+{legends}
+
+NARRACIÓN:
+{text}
+
+Tarea:
+- Si la narración no contradice reglas, poderes, relaciones canónicas ni eventos activos, responde EXACTAMENTE: OK
+- Si hay contradicciones, reescribe la narración completa corrigiéndolas.
+- Conserva el mismo formato y conserva/metadatos válidos al final.
+- No agregues explicaciones.
+"""
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": "Eres un verificador de continuidad. Responde OK o una narración corregida."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.1
+    )
+    content = response.choices[0].message.content.strip()
+    if content.upper() == "OK":
+        return text
+    return strip_prompt_leaks(content)
 
 async def repair_combat_metadata(text: str, metadata: dict, level_ups: list):
     combat_words = ("batalla", "combate", "duelo", "emboscada", "pelea", "enfrentamiento", "atac", "golpe", "herid")
@@ -587,6 +648,26 @@ Las opciones deben ser concretas, urgentes y relacionadas con salvar, sacrificar
     except Exception:
         return None
 
+async def suggest_vote_consequence(question: str, result: str):
+    prompt = f"""
+Genera una consecuencia narrativa breve y concreta para esta votación cerrada.
+
+Pregunta: {question}
+Resultado ganador: {result}
+
+Reglas:
+- La consecuencia debe ser visible en la historia futura.
+- No contradigas reglas canónicas.
+- No resumas la votación; describe el cambio narrativo causado.
+- Máximo 2 frases.
+"""
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.35
+    )
+    return response.choices[0].message.content.strip()
+
 def extract_level_ups(text: str):
     """
     Detecta subidas de nivel en el texto.
@@ -678,6 +759,10 @@ def append_metadata_summary(text: str, metadata: dict):
         lines = [f"• **{outcome}:** {summary}" for _, _, outcome, summary in metadata["battles"]]
         sections.append("⚔️ **Combates registrados**\n" + "\n".join(lines))
 
+    if metadata["legends"]:
+        lines = [f"• **{name}:** {level} en {kingdom} [{status}]" for name, level, kingdom, status, _ in metadata["legends"]]
+        sections.append("👹 **Leyendas enemigas**\n" + "\n".join(lines))
+
     if not sections:
         return text
 
@@ -696,7 +781,8 @@ def extract_metadata(text: str):
         "npcs_appear": [],
         "npcs_disappear": [],
         "battles": [],
-        "key_events": []
+        "key_events": [],
+        "legends": []
     }
 
     for raw_line in text.splitlines():
@@ -774,6 +860,11 @@ def extract_metadata(text: str):
             parts = split_payload(line, "[KEY_EVENT]", 3)
             if parts:
                 metadata["key_events"].append(tuple(parts))
+
+        elif line.startswith("[LEGEND]"):
+            parts = split_payload(line, "[LEGEND]", 5)
+            if parts:
+                metadata["legends"].append(tuple(parts))
 
     return metadata
 

@@ -10,14 +10,19 @@ from database import (
     get_active_key_events,
     get_all_characters_for_dashboard,
     get_all_days,
+    get_battle_detail,
     get_battles,
     get_character_locations,
+    get_character_progression,
     get_character_stats,
     get_day_log,
+    get_kingdom_detail,
+    get_kingdoms_overview,
     get_npcs,
     get_power_ranking,
     get_quotes,
     get_recent_trades,
+    get_timeline_events,
     get_votes,
 )
 
@@ -69,6 +74,18 @@ def info_card(title, value, accent=False):
 def section_heading(title, subtitle=""):
     subtitle_html = f"<p>{html.escape(subtitle)}</p>" if subtitle else ""
     return f"<div class='section-heading'><h3>{html.escape(title)}</h3>{subtitle_html}</div>"
+
+
+def list_value(value):
+    if value is None:
+        return []
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return [value]
+        return parsed if isinstance(parsed, list) else [str(parsed)]
+    return value if isinstance(value, list) else [str(value)]
 
 
 def page(title, body):
@@ -335,7 +352,7 @@ def page(title, body):
         </div>
       </div>
       <nav>
-        <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/votaciones">Votaciones</a><a href="/comercio">Comercio</a><a href="/novel">Novel</a>
+        <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/reinos">Reinos</a><a href="/timeline">Timeline</a><a href="/progresion">Progresión</a><a href="/combates">Combates</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/votaciones">Votaciones</a><a href="/comercio">Comercio</a><a href="/novel">Novel</a>
       </nav>
     </div>
   </header>
@@ -454,6 +471,117 @@ async def map_page():
         body += f"<div class='card compact'><span class='title'>{html.escape(row['name'])}</span><div class='meta'><span class='pill'>{html.escape(row['race'])}</span><span class='pill'>{html.escape(row['current_kingdom'] or 'Ubicación desconocida')}</span></div></div>"
     body += "</div>"
     return page("Mapa", body)
+
+
+@app.get("/reinos", response_class=HTMLResponse)
+async def kingdoms_page():
+    rows = await get_kingdoms_overview()
+    body = "<section class='p-5 sm:p-7'><p class='mb-2 text-sm font-bold uppercase tracking-[0.25em] text-sky-300/80'>Territorios</p><h2>Reinos y facciones</h2><div class='grid'>"
+    for row in rows:
+        kingdom = row["kingdom"]
+        body += f"<a class='card card-link compact' href='/reinos/{quote(kingdom, safe='')}'><span class='title'>{html.escape(kingdom)}</span><span class='pill'>Ver detalle</span></a>"
+    if not rows:
+        body += "<div class='card empty'>No hay reinos con actividad registrada.</div>"
+    body += "</div></section>"
+    return page("Reinos", body)
+
+
+@app.get("/reinos/{kingdom}", response_class=HTMLResponse)
+async def kingdom_detail_page(kingdom: str):
+    data = await get_kingdom_detail(kingdom)
+    body = f"<section class='p-5 sm:p-7'><h2>{html.escape(kingdom)}</h2>"
+    body += section_heading("Personajes", "Campeones o protagonistas ubicados actualmente aquí.")
+    body += "<div class='grid'>"
+    for row in data["characters"]:
+        body += f"<div class='card compact'><span class='title'>{html.escape(row['name'])}</span><div class='meta'><span class='pill'>{html.escape(row['race'])}</span><span class='pill'>Nivel {row['level']}</span><span class='pill'>{html.escape(row['status'])}</span></div></div>"
+    body += "</div>" if data["characters"] else "<div class='card empty'>Sin personajes registrados aquí.</div>"
+    body += section_heading("NPCs", "Habitantes o figuras activas/inactivas del lugar.")
+    body += "<div class='grid'>"
+    for row in data["npcs"]:
+        body += f"<div class='card compact'><span class='title'>{html.escape(row['name'])}</span><div class='meta'><span class='pill'>{html.escape(row['role'] or 'sin rol')}</span><span class='pill'>{html.escape(row['status'])}</span></div><p class='muted'>{html.escape(row['description'] or '')}</p></div>"
+    body += "</div>" if data["npcs"] else "<div class='card empty'>Sin NPCs registrados.</div>"
+    body += section_heading("Reputación", "Fama acumulada por personaje.")
+    for row in data["reputation"]:
+        body += f"<div class='card compact'><span class='title'>{html.escape(row['name'])}</span><span class='pill'>Fama {row['fame_level']}</span><p class='muted'>{html.escape(row['notes'] or '')}</p></div>"
+    body += section_heading("Comercio", "Movimientos de objetos relacionados con este territorio.")
+    for row in data["trades"]:
+        origin = row["origin_kingdom"] or "origen desconocido"
+        body += f"<div class='card compact'><span class='title'>{html.escape(row['item_name'])}</span><div class='meta'><span class='pill'>Día {row['day']}</span><span class='pill'>Desde {html.escape(origin)}</span><span class='pill'>Hacia {html.escape(row['destination_kingdom'])}</span></div></div>"
+    body += section_heading("Eventos", "Eventos clave que mencionan este reino o facción.")
+    for row in data["events"]:
+        body += f"<div class='card'><span class='title'>{html.escape(row['title'] or 'Evento')}</span><p>{html.escape(row['description'])}</p><div class='meta'><span class='pill'>Día {row['day']}</span><span class='pill'>{html.escape(row['event_type'])}</span></div></div>"
+    body += section_heading("Leyendas", "Enemigos persistentes asociados al lugar.")
+    for row in data["legends"]:
+        body += f"<div class='card compact'><span class='title'>{html.escape(row['name'])}</span><div class='meta'><span class='pill'>{html.escape(row['power_level'] or 'poder desconocido')}</span><span class='pill'>{html.escape(row['status'])}</span></div><p>{html.escape(row['description'] or '')}</p></div>"
+    body += "</section>"
+    return page(kingdom, body)
+
+
+@app.get("/timeline", response_class=HTMLResponse)
+async def timeline_page():
+    rows = await get_timeline_events(limit=250)
+    body = "<section class='p-5 sm:p-7'><p class='mb-2 text-sm font-bold uppercase tracking-[0.25em] text-violet-300/80'>Cronología</p><h2>Línea de tiempo</h2>"
+    current_day = None
+    for row in rows:
+        if row["day"] != current_day:
+            current_day = row["day"]
+            body += f"<h3 class='mt-8'>Día {current_day}</h3>"
+        body += f"<details class='card compact' open><summary><strong>{html.escape(row['title'] or row['event_type'])}</strong> <span class='pill'>{html.escape(row['event_type'])}</span></summary><p class='muted mt-3'>{html.escape(row['description'] or '')}</p></details>"
+    body += "</section>"
+    return page("Timeline", body)
+
+
+@app.get("/progresion", response_class=HTMLResponse)
+async def progression_page():
+    rows = await get_character_progression()
+    grouped = {}
+    max_level = 1
+    max_fame = 1
+    for row in rows:
+        grouped.setdefault(row["character_name"], []).append(row)
+        max_level = max(max_level, row["level"])
+        max_fame = max(max_fame, row["total_fame"])
+    body = "<section class='p-5 sm:p-7'><p class='mb-2 text-sm font-bold uppercase tracking-[0.25em] text-emerald-300/80'>Crecimiento</p><h2>Progresión de personajes</h2>"
+    if not grouped:
+        body += "<div class='card empty'>La progresión empezará a registrarse desde el próximo día generado.</div></section>"
+        return page("Progresión", body)
+    for name, points in grouped.items():
+        body += f"<div class='card'><span class='title'>{html.escape(name)}</span>"
+        for point in points[-20:]:
+            level_width = max(4, int((point["level"] / max_level) * 100))
+            fame_width = max(4, int((point["total_fame"] / max_fame) * 100)) if max_fame else 4
+            body += f"<div class='my-3'><div class='meta'><span class='pill'>Día {point['day']}</span><span class='pill'>Nivel {point['level']}</span><span class='pill'>Fama {point['total_fame']}</span></div><div class='mt-2 h-2 rounded-full bg-slate-800'><div class='h-2 rounded-full bg-sky-300' style='width:{level_width}%'></div></div><div class='mt-1 h-2 rounded-full bg-slate-800'><div class='h-2 rounded-full bg-amber-300' style='width:{fame_width}%'></div></div></div>"
+        body += "</div>"
+    body += "</section>"
+    return page("Progresión", body)
+
+
+@app.get("/combates", response_class=HTMLResponse)
+async def battles_page():
+    rows = await get_battles(limit=100)
+    body = "<section class='p-5 sm:p-7'><p class='mb-2 text-sm font-bold uppercase tracking-[0.25em] text-red-300/80'>Registro bélico</p><h2>Combates</h2><div class='grid'>"
+    for row in rows:
+        body += f"<a class='card card-link' href='/combates/{row['id']}'><span class='title'>{html.escape(row['outcome'] or 'Combate')}</span><p class='muted'>{html.escape(row['summary'] or '')}</p><span class='pill'>Día {row['day']}</span></a>"
+    body += "</div></section>"
+    return page("Combates", body)
+
+
+@app.get("/combates/{battle_id}", response_class=HTMLResponse)
+async def battle_detail_page(battle_id: int):
+    row = await get_battle_detail(battle_id)
+    if not row:
+        return page("Combate no encontrado", "<p>Combate no encontrado.</p>")
+    participants = list_value(row["participants"])
+    enemies = list_value(row["enemies"])
+    body = f"<section class='p-5 sm:p-7'><h2>{html.escape(row['outcome'] or 'Combate')}</h2><div class='meta'><span class='pill'>Día {row['day']}</span><span class='pill'>Combate #{row['id']}</span></div><div class='card'><p>{html.escape(row['summary'] or '')}</p></div>"
+    body += section_heading("Participantes") + "<div class='grid'>"
+    for name in participants:
+        body += f"<a class='card card-link compact' href='/personajes/{quote(str(name), safe='')}'><span class='title'>{html.escape(str(name))}</span></a>"
+    body += "</div>" + section_heading("Enemigos") + "<div class='grid'>"
+    for name in enemies:
+        body += f"<div class='card compact'><span class='title'>{html.escape(str(name))}</span></div>"
+    body += "</div></section>"
+    return page("Combate", body)
 
 
 @app.get("/arcos", response_class=HTMLResponse)

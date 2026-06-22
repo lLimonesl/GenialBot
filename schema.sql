@@ -155,3 +155,25 @@ CREATE TABLE IF NOT EXISTS trade_logs (
     notes TEXT,
     created_at TIMESTAMP DEFAULT NOW()
 );
+
+CREATE TABLE IF NOT EXISTS legends (
+    id SERIAL PRIMARY KEY,
+    name TEXT UNIQUE NOT NULL,
+    power_level TEXT,
+    kingdom TEXT,
+    status TEXT NOT NULL DEFAULT 'Active',
+    description TEXT,
+    first_appearance_day INTEGER,
+    last_appearance_day INTEGER,
+    notes TEXT
+);
+
+CREATE TABLE IF NOT EXISTS character_progression (
+    id SERIAL PRIMARY KEY,
+    day INTEGER NOT NULL,
+    character_id INTEGER REFERENCES characters(id) ON DELETE CASCADE,
+    character_name TEXT NOT NULL,
+    level INTEGER NOT NULL,
+    total_fame INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(day, character_id)
+);
