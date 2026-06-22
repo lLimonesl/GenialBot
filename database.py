@@ -1,6 +1,7 @@
 # database.py
 import json
 from db import get_pool
+from load_world import WORLD_META, WORLD_RULES, SOCIAL_HIERARCHY
 
 # ---------- INIT DB (solo PostgreSQL) ----------
 
@@ -139,12 +140,21 @@ async def init_db():
         );
         """)
 
-                # Inicializar world
+        # Inicializar world
         await conn.execute("""
-            INSERT INTO world (id, current_day, rules, hierarchy)
-            VALUES (1, 0, '', '{}'::jsonb)
+            INSERT INTO world (id, current_day, rules, hierarchy, meta)
+            VALUES (1, 0, $1, $2::jsonb, $3::jsonb)
             ON CONFLICT (id) DO NOTHING
-        """)
+        """, WORLD_RULES, json.dumps(SOCIAL_HIERARCHY), json.dumps(WORLD_META))
+
+        await conn.execute("""
+            UPDATE world
+            SET rules = $1,
+                hierarchy = $2::jsonb,
+                meta = COALESCE(meta, $3::jsonb)
+            WHERE id = 1
+              AND rules = ''
+        """, WORLD_RULES, json.dumps(SOCIAL_HIERARCHY), json.dumps(WORLD_META))
 
 # ---------- WORLD ----------
 
@@ -667,7 +677,7 @@ async def kill_character(name: str, cause: str):
     async with pool.acquire() as conn:
         # Obtener id del personaje
         row = await conn.fetchrow(
-            "SELECT id FROM characters WHERE name = $1",
+            "SELECT id, name FROM characters WHERE name ILIKE $1",
             name
         )
 
@@ -675,6 +685,7 @@ async def kill_character(name: str, cause: str):
             return False  # personaje no existe
 
         character_id = row["id"]
+        character_name = row["name"]
 
         # Marcar como muerto
         await conn.execute(
@@ -693,15 +704,20 @@ async def kill_character(name: str, cause: str):
             "SELECT current_day FROM world WHERE id = 1"
         )
 
+        death_text = f"{character_name} ha muerto definitivamente. Causa: {cause}"
+        death_summary = f"Muerte permanente de {character_name}"
+
         await conn.execute("""
             INSERT INTO daily_logs (day, title, full_text, summary)
             VALUES ($1, $2, $3, $4)
-            ON CONFLICT (day) DO NOTHING
+            ON CONFLICT (day) DO UPDATE SET
+                full_text = CONCAT_WS(E'\n\n', daily_logs.full_text, EXCLUDED.full_text),
+                summary = CONCAT_WS(E'\n', daily_logs.summary, EXCLUDED.summary)
         """,
             day,
             "Muerte de un Campeón",
-            f"{name} ha muerto definitivamente. Causa: {cause}",
-            f"Muerte permanente de {name}"
+            death_text,
+            death_summary
         )
 
     return True

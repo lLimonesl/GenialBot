@@ -106,4 +106,5 @@ async def main():
 
     print("🌍 Mundo actualizado con memoria y relaciones canónicas.")
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
