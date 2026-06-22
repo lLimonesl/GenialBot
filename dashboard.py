@@ -1,4 +1,5 @@
 import html
+import json
 from urllib.parse import quote
 
 from fastapi import FastAPI
@@ -17,10 +18,23 @@ from database import (
     get_power_ranking,
     get_quotes,
     get_recent_trades,
+    get_votes,
 )
 
 
 app = FastAPI(title="GenialBot Dashboard")
+
+
+def value_text(value):
+    if value is None:
+        return "N/A"
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return value
+        return json.dumps(parsed, ensure_ascii=False)
+    return json.dumps(value, ensure_ascii=False)
 
 
 def page(title, body):
@@ -196,7 +210,7 @@ def page(title, body):
         </div>
       </div>
       <nav>
-        <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/comercio">Comercio</a><a href="/novel">Novel</a>
+        <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/votaciones">Votaciones</a><a href="/comercio">Comercio</a><a href="/novel">Novel</a>
       </nav>
     </div>
   </header>
@@ -263,8 +277,31 @@ async def character_detail(name: str):
     c = data["character"]
     body = f"<h2>{html.escape(c['name'])}</h2><div class='card'>"
     body += f"<div class='meta'><span class='pill'>Raza: {html.escape(c['race'])}</span><span class='pill'>Estado: {html.escape(c['status'])}</span><span class='pill'>Nivel {c['level']}</span></div>"
+    body += f"<p class='muted'>Estatus social</p><p>{html.escape(c['social_status'])}</p>"
     body += f"<p class='muted'>Ubicación actual</p><p>{html.escape(c['current_kingdom'] or 'Desconocida')}</p>"
+    body += f"<p class='muted'>Arma</p><p>{html.escape(c['weapon'] or 'N/A')}</p>"
+    body += f"<p class='muted'>Amuleto</p><p>{html.escape(c['amulet'] or 'N/A')}</p>"
+    body += f"<p class='muted'>Mascota</p><pre>{html.escape(value_text(c['pet']))}</pre>"
+    body += f"<p class='muted'>Habilidades</p><pre>{html.escape(value_text(c['abilities']))}</pre>"
+    body += f"<p class='muted'>Pasivas</p><pre>{html.escape(value_text(c['passives']))}</pre>"
+    body += f"<p class='muted'>Movimiento final</p><pre>{html.escape(value_text(c['final_move']))}</pre>"
     body += f"<p class='muted'>Combates registrados: {data['battle_count']}</p></div>"
+    if data["arcs"]:
+        body += "<h3>Arcos</h3><div class='grid'>"
+        for arc in data["arcs"]:
+            body += f"<div class='card compact'><span class='title'>{html.escape(arc['arc_name'])}</span><p class='muted'>{html.escape(arc['arc_goal'] or '')}</p><div class='meta'><span class='pill'>{html.escape(arc['arc_status'] or 'sin estado')}</span><span class='pill'>{arc['arc_progress']}%</span></div></div>"
+        body += "</div>"
+    if data["items"]:
+        body += "<h3>Inventario</h3><div class='grid'>"
+        for item in data["items"]:
+            equipped = "equipado" if item["equipped"] else "guardado"
+            body += f"<div class='card compact'><span class='title'>{html.escape(item['item_name'])}</span><p class='muted'>{html.escape(item['item_description'] or 'Sin descripción')}</p><div class='meta'><span class='pill'>x{item['quantity']}</span><span class='pill'>{html.escape(item['item_type'] or 'sin tipo')}</span><span class='pill'>{equipped}</span></div></div>"
+        body += "</div>"
+    if data["reputation"]:
+        body += "<h3>Fama</h3><div class='grid'>"
+        for rep in data["reputation"]:
+            body += f"<div class='card compact'><span class='title'>{html.escape(rep['kingdom'])}</span><div class='meta'><span class='pill'>Fama {rep['fame_level']}</span></div><p class='muted'>{html.escape(rep['notes'] or '')}</p></div>"
+        body += "</div>"
     return page(c['name'], body)
 
 
@@ -325,6 +362,17 @@ async def events_page():
     for row in rows:
         body += f"<div class='card'><span class='title'>{html.escape(row['title'] or 'Evento')}</span><p>{html.escape(row['description'])}</p><div class='meta'><span class='pill'>Día {row['day']}</span><span class='pill'>{html.escape(row['event_type'])}</span></div></div>"
     return page("Eventos", body)
+
+
+@app.get("/votaciones", response_class=HTMLResponse)
+async def votes_page():
+    rows = await get_votes(limit=50)
+    body = "<h2>Votaciones</h2>"
+    for row in rows:
+        result = row["result"] or "sin resultado"
+        consequence = row["consequence"] or "sin consecuencia"
+        body += f"<div class='card'><span class='title'>#{row['id']} - {html.escape(row['question'] or 'Votación')}</span><div class='meta'><span class='pill'>Día {row['day']}</span><span class='pill'>{html.escape(row['status'] or 'sin estado')}</span><span class='pill'>{html.escape(row['vote_type'] or 'critical')}</span><span class='pill'>Resultado: {html.escape(result)}</span></div><p class='muted'>Consecuencia: {html.escape(consequence)}</p></div>"
+    return page("Votaciones", body)
 
 
 @app.get("/comercio", response_class=HTMLResponse)

@@ -66,14 +66,16 @@ def build_page(toc, chapters):
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>GenialBot - Web Novel</title>
   <style>
-    body {{ margin: 0; font-family: Georgia, serif; background: #f6efe3; color: #24160e; }}
-    header {{ padding: 48px 24px; text-align: center; background: #24160e; color: #f6efe3; }}
-    main {{ max-width: 900px; margin: 0 auto; padding: 32px 20px; }}
-    nav, .chapter {{ background: #fffaf0; padding: 24px; margin-bottom: 28px; border: 1px solid #dac7a5; }}
-    a {{ color: #7a3415; }}
-    h1, h2, h3 {{ font-family: Georgia, serif; }}
-    .weather {{ color: #6c5b46; font-style: italic; }}
-    .story p {{ line-height: 1.75; font-size: 1.08rem; }}
+    body {{ margin: 0; font-family: Georgia, serif; background: radial-gradient(circle at top left, #26324f, transparent 32rem), #080b13; color: #f8fafc; }}
+    header {{ padding: 56px 24px; text-align: center; border-bottom: 1px solid rgba(148,163,184,.22); background: rgba(8,11,19,.72); }}
+    main {{ max-width: 920px; margin: 0 auto; padding: 34px 20px 60px; }}
+    nav, .chapter {{ background: rgba(18,24,39,.86); padding: 26px; margin-bottom: 28px; border: 1px solid rgba(148,163,184,.18); border-radius: 22px; box-shadow: 0 24px 70px rgba(0,0,0,.28); }}
+    a {{ color: #7dd3fc; text-decoration: none; }}
+    a:hover {{ color: #bae6fd; }}
+    h1, h2, h3 {{ margin-top: 0; letter-spacing: -.02em; }}
+    li {{ margin: 8px 0; }}
+    .weather {{ color: #a8b3c7; font-style: italic; }}
+    .story p {{ line-height: 1.82; font-size: 1.08rem; color: #e5edf8; }}
   </style>
 </head>
 <body>

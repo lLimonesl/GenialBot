@@ -1,5 +1,6 @@
 # database.py
 import json
+import re
 from db import get_pool
 from load_world import WORLD_META, WORLD_RULES, SOCIAL_HIERARCHY
 
@@ -331,8 +332,10 @@ async def get_active_key_events(limit=25):
 async def record_consequence(vote_id: int, consequence: str):
     pool = await get_pool()
     async with pool.acquire() as conn:
-        vote = await conn.fetchrow("SELECT day, question, result FROM votes WHERE id = $1", vote_id)
+        vote = await conn.fetchrow("SELECT day, question, result, status FROM votes WHERE id = $1", vote_id)
         if not vote:
+            return False
+        if vote["status"] != "closed":
             return False
         await conn.execute("UPDATE votes SET consequence = $1 WHERE id = $2", consequence, vote_id)
         await conn.execute("""
@@ -430,7 +433,7 @@ async def get_character_by_name(name):
     pool = await get_pool()
     async with pool.acquire() as conn:
         return await conn.fetchrow(
-            "SELECT * FROM characters WHERE name = $1",
+            "SELECT * FROM characters WHERE name ILIKE $1",
             name
         )
 
@@ -438,7 +441,7 @@ async def set_character_status(name, status):
     pool = await get_pool()
     async with pool.acquire() as conn:
         await conn.execute(
-            "UPDATE characters SET status = $1 WHERE name = $2",
+            "UPDATE characters SET status = $1 WHERE name ILIKE $2",
             status, name
         )
 
@@ -483,7 +486,7 @@ async def create_character_arc(character_name, arc_name, arc_goal):
     pool = await get_pool()
     async with pool.acquire() as conn:
         character_id = await conn.fetchval(
-            "SELECT id FROM characters WHERE name = $1",
+            "SELECT id FROM characters WHERE name ILIKE $1",
             character_name
         )
         if not character_id:
@@ -510,7 +513,7 @@ async def update_arc_progress(character_name, arc_name, amount):
     pool = await get_pool()
     async with pool.acquire() as conn:
         character_id = await conn.fetchval(
-            "SELECT id FROM characters WHERE name = $1",
+            "SELECT id FROM characters WHERE name ILIKE $1",
             character_name
         )
         if not character_id:
@@ -605,7 +608,7 @@ async def save_quotes(day, quotes):
     async with pool.acquire() as conn:
         for character_name, quote in quotes:
             character_id = await conn.fetchval(
-                "SELECT id FROM characters WHERE name = $1",
+                "SELECT id FROM characters WHERE name ILIKE $1",
                 character_name
             )
             await conn.execute("""
@@ -649,7 +652,7 @@ async def apply_inventory_changes(gains, losses, day):
     async with pool.acquire() as conn:
         for character_name, item_name, item_type, description in gains:
             character_id = await conn.fetchval(
-                "SELECT id FROM characters WHERE name = $1",
+                "SELECT id FROM characters WHERE name ILIKE $1",
                 character_name
             )
             if not character_id:
@@ -665,7 +668,7 @@ async def apply_inventory_changes(gains, losses, day):
 
         for character_name, item_name in losses:
             character_id = await conn.fetchval(
-                "SELECT id FROM characters WHERE name = $1",
+                "SELECT id FROM characters WHERE name ILIKE $1",
                 character_name
             )
             if not character_id:
@@ -709,7 +712,7 @@ async def update_locations(locations):
             await conn.execute("""
                 UPDATE characters
                 SET current_kingdom = $1
-                WHERE name = $2
+                WHERE name ILIKE $2
             """, kingdom, character_name)
 
 async def apply_reputation_changes(changes):
@@ -720,7 +723,7 @@ async def apply_reputation_changes(changes):
     async with pool.acquire() as conn:
         for character_name, kingdom, amount, notes in changes:
             character_id = await conn.fetchval(
-                "SELECT id FROM characters WHERE name = $1",
+                "SELECT id FROM characters WHERE name ILIKE $1",
                 character_name
             )
             if not character_id:
@@ -847,7 +850,7 @@ async def mark_npcs_inactive(names, day):
             await conn.execute("""
                 UPDATE npcs
                 SET status = 'Inactive', last_appearance_day = $1
-                WHERE name = $2
+                WHERE name ILIKE $2
             """, day, name)
 
 async def get_npcs(active_only=True):
@@ -960,7 +963,7 @@ async def get_closed_votes(limit=3):
             SELECT question, result, consequence, vote_type
             FROM votes
             WHERE status = 'closed'
-              AND COALESCE(vote_type, 'critical') != 'quick'
+              AND COALESCE(vote_type, 'critical') = 'critical'
               AND COALESCE(result, '') != 'Empate - segunda vuelta creada'
             ORDER BY id DESC
             LIMIT $1
@@ -1079,7 +1082,7 @@ async def create_ability_unlock_vote(character_name: str, day: int, suggested_ab
     pool = await get_pool()
     async with pool.acquire() as conn:
         character_id = await conn.fetchval(
-            "SELECT id FROM characters WHERE name = $1",
+            "SELECT id FROM characters WHERE name ILIKE $1",
             character_name
         )
         if not character_id:
@@ -1091,7 +1094,7 @@ async def create_ability_unlock_vote(character_name: str, day: int, suggested_ab
         return True
 
 async def apply_unlocked_ability(vote_id: int, ability: str):
-    if not ability or ability.lower() == "ninguna" or ability == "Sin votos":
+    if not ability or ability.lower() in ("ninguna", "sin votos", "sin resultado") or ability.lower().startswith("empate"):
         return False
 
     pool = await get_pool()
@@ -1109,7 +1112,10 @@ async def apply_unlocked_ability(vote_id: int, ability: str):
         abilities = row["abilities"] or {}
         if isinstance(abilities, str):
             abilities = json.loads(abilities)
-        key = ability.lower().replace(" ", "_")[:60]
+        ability_name = ability.split(":", 1)[0].strip()
+        key = re.sub(r"[^a-z0-9_]+", "_", ability_name.lower().replace(" ", "_")).strip("_")[:60]
+        if not key:
+            key = "habilidad_desbloqueada"
         abilities[key] = ability
 
         await conn.execute("""

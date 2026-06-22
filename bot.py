@@ -138,7 +138,7 @@ async def send_commands_help(ctx):
 **Comandos disponibles**
 
 **Historia**
-• `!generar_dia` - Genera manualmente el siguiente día
+• `!generar_dia` - Testing: cierra votos abiertos con reacciones actuales y genera el siguiente día
 • `!historial` - Muestra el día actual guardado
 • `!historial <día>` - Muestra un día específico
 • `!historial --personaje <nombre>` - Busca días donde aparece un personaje
@@ -187,6 +187,21 @@ def decode_vote_options(options):
     if isinstance(options, str):
         return json.loads(options)
     return options
+
+def normalize_vote_option(text):
+    return " ".join(str(text or "").strip().lower().split())
+
+def option_is_valid(result, options):
+    normalized = normalize_vote_option(result)
+    return any(normalize_vote_option(option) == normalized for option in options)
+
+def is_non_choice_result(result):
+    normalized = normalize_vote_option(result)
+    return (
+        not normalized
+        or normalized in {"sin votos", "sin resultado", "ninguna"}
+        or normalized.startswith("empate")
+    )
 
 async def publish_critical_decision(channel, day, texto):
     decision = await detect_critical_decision(texto)
@@ -262,7 +277,7 @@ async def close_pending_votes_for_manual_generation(channel):
         await close_vote(vote["id"], result)
 
         ability_message = ""
-        if vote["vote_type"] == "ability" and result not in ("Sin votos", "Sin resultado") and not tied:
+        if vote["vote_type"] == "ability" and not tied and option_is_valid(result, options) and not is_non_choice_result(result):
             character_name = await apply_unlocked_ability(vote["id"], result)
             if character_name:
                 ability_message = f" | {character_name} desbloqueó habilidad"
@@ -393,7 +408,8 @@ async def close_votes_task():
         await close_vote(vote["id"], result)
 
         ability_message = ""
-        if vote["vote_type"] == "ability":
+        options = decode_vote_options(vote["options"])
+        if vote["vote_type"] == "ability" and option_is_valid(result, options) and not is_non_choice_result(result):
             character_name = await apply_unlocked_ability(vote["id"], result)
             if character_name:
                 ability_message = f"\n✨ {character_name} desbloqueó: **{result}**"
@@ -694,9 +710,9 @@ async def arcos(ctx):
         return
 
     msg = "**Arcos activos:**\n"
-    for name, arc, goal, progress in arcs:
-        msg += f"• {name}: {arc} ({progress}%)\n"
-    await ctx.send(msg)
+    for row in arcs:
+        msg += f"• {row['name']}: {row['arc_name']} ({row['arc_progress']}%)\n"
+    await send_split(ctx, msg)
 
 @bot.command()
 @commands.has_permissions(administrator=True)
@@ -772,9 +788,18 @@ async def encuesta(ctx, *, pregunta_opciones: str):
 @commands.has_permissions(administrator=True)
 async def cerrar_votacion(ctx, vote_id: int, *, resultado: str):
     vote = await get_vote(vote_id)
+    if not vote:
+        await ctx.send("No encontré esa votación.")
+        return
+
+    options = decode_vote_options(vote["options"])
+    if vote["vote_type"] == "ability" and not option_is_valid(resultado, options):
+        await ctx.send("❌ Ese resultado no existe entre las opciones de la votación de habilidad.")
+        return
+
     await close_vote(vote_id, resultado)
     ability_message = ""
-    if vote and vote["vote_type"] == "ability":
+    if vote["vote_type"] == "ability" and not is_non_choice_result(resultado):
         character_name = await apply_unlocked_ability(vote_id, resultado)
         if character_name:
             ability_message = f"\n✨ {character_name} desbloqueó: **{resultado}**"
@@ -785,7 +810,7 @@ async def cerrar_votacion(ctx, vote_id: int, *, resultado: str):
 async def consecuencia(ctx, vote_id: int, *, texto: str):
     ok = await record_consequence(vote_id, texto)
     if not ok:
-        await ctx.send("No encontré esa votación.")
+        await ctx.send("No encontré esa votación cerrada.")
         return
     await ctx.send(f"✅ Consecuencia registrada para votación {vote_id}.")
 
@@ -859,7 +884,11 @@ async def generar_dia(ctx):
     channel = bot.get_channel(CHANNEL_ID)
     closed_votes = await close_pending_votes_for_manual_generation(channel)
     if closed_votes:
-        await send_split(ctx, "🧪 **Votos abiertos cerrados antes de generar el día:**\n" + "\n".join(closed_votes))
+        closed_message = "🧪 **Votos abiertos cerrados antes de generar el día:**\n" + "\n".join(closed_votes)
+        await send_split(ctx, closed_message)
+        if channel and ctx.channel.id != CHANNEL_ID:
+            for part in split_message(closed_message):
+                await channel.send(part)
 
     clean_text, display_text, title, level_ups = await generate_next_day()
 
