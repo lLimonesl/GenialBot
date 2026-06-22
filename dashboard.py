@@ -1,4 +1,5 @@
 import html
+from urllib.parse import quote
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -120,6 +121,7 @@ def page(title, body):
       border-radius: 22px;
       box-shadow: var(--shadow);
     }}
+    .card.compact {{ padding: 18px 20px; }}
     .card::after {{
       content: "";
       position: absolute;
@@ -129,6 +131,40 @@ def page(title, body):
       opacity: 0.42;
     }}
     .card > * {{ position: relative; z-index: 1; }}
+    .card-link {{
+      display: block;
+      color: inherit;
+      cursor: pointer;
+      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
+    }}
+    .card-link:hover {{
+      transform: translateY(-2px);
+      border-color: rgba(125, 211, 252, 0.52);
+      background: linear-gradient(145deg, rgba(30, 41, 59, 0.94), rgba(14, 116, 144, 0.16));
+    }}
+    .card-link .title {{ color: #ffffff; }}
+    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; margin-top: 18px; }}
+    .grid .card {{ margin: 0; }}
+    .title {{ display: block; margin-bottom: 7px; font-size: 1.06rem; font-weight: 800; letter-spacing: -0.01em; }}
+    .meta {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }}
+    .pill {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 27px;
+      padding: 4px 9px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.64);
+      color: #cbd5e1;
+      font-size: 0.84rem;
+    }}
+    .empty {{
+      border: 1px dashed rgba(148, 163, 184, 0.28);
+      background: rgba(15, 23, 42, 0.46);
+      color: var(--muted);
+      text-align: center;
+    }}
+    .quote {{ font-size: 1.04rem; line-height: 1.62; color: #eef6ff; }}
     .muted {{ color: var(--muted); }}
     pre {{
       white-space: pre-wrap;
@@ -145,6 +181,7 @@ def page(title, body):
       nav {{ gap: 8px; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; }}
       nav a {{ white-space: nowrap; }}
       .card {{ padding: 18px; border-radius: 18px; }}
+      .grid {{ grid-template-columns: 1fr; }}
     }}
   </style>
 </head>
@@ -172,11 +209,11 @@ def page(title, body):
 async def home():
     days = await get_all_days()
     if not days:
-        return page("GenialBot", "<p>No hay días generados todavía.</p>")
+        return page("GenialBot", "<div class='card empty'>No hay días generados todavía.</div>")
     latest = days[-1]
     latest_title = latest["title"] or f"Día {latest['day']}"
     body = f"<h2>{html.escape(latest_title)}</h2>"
-    body += f"<p class='muted'>Día {latest['day']} | Clima: {html.escape(latest['weather'] or 'No registrado')}</p>"
+    body += f"<div class='meta'><span class='pill'>Día {latest['day']}</span><span class='pill'>Clima: {html.escape(latest['weather'] or 'No registrado')}</span></div>"
     body += f"<div class='card'><pre>{html.escape(latest['full_text'] or latest['summary'] or '')}</pre></div>"
     return page("GenialBot", body)
 
@@ -184,10 +221,11 @@ async def home():
 @app.get("/historia", response_class=HTMLResponse)
 async def history():
     days = await get_all_days()
-    body = "<h2>Historia</h2>"
+    body = "<h2>Historia</h2><div class='grid'>"
     for day in days:
         title = day["title"] or f"Día {day['day']}"
-        body += f"<div class='card'><a href='/historia/{day['day']}'><strong>{html.escape(title)}</strong></a><p class='muted'>{html.escape(day['summary'] or '')}</p></div>"
+        body += f"<a class='card card-link' href='/historia/{day['day']}'><span class='title'>{html.escape(title)}</span><p class='muted'>{html.escape(day['summary'] or '')}</p><span class='pill'>Leer día {day['day']}</span></a>"
+    body += "</div>"
     return page("Historia", body)
 
 
@@ -198,7 +236,7 @@ async def history_day(day: int):
         return page("Día no encontrado", "<p>Día no encontrado.</p>")
     title = row["title"] or f"Día {day}"
     body = f"<h2>{html.escape(title)}</h2>"
-    body += f"<p class='muted'>Clima: {html.escape(row['weather'] or 'No registrado')}</p>"
+    body += f"<div class='meta'><span class='pill'>Día {day}</span><span class='pill'>Clima: {html.escape(row['weather'] or 'No registrado')}</span></div>"
     body += f"<div class='card'><pre>{html.escape(row['full_text'] or row['summary'] or '')}</pre></div>"
     return page(title, body)
 
@@ -206,9 +244,14 @@ async def history_day(day: int):
 @app.get("/personajes", response_class=HTMLResponse)
 async def characters():
     rows = await get_all_characters_for_dashboard()
-    body = "<h2>Personajes</h2>"
+    body = "<h2>Personajes</h2><div class='grid'>"
     for row in rows:
-        body += f"<div class='card'><a href='/personajes/{html.escape(row['name'])}'><strong>{html.escape(row['name'])}</strong></a> ({html.escape(row['race'])}) - Nivel {row['level']} - {html.escape(row['status'])}</div>"
+        name = html.escape(row["name"])
+        race = html.escape(row["race"])
+        status = html.escape(row["status"])
+        path_name = quote(row["name"], safe="")
+        body += f"<a class='card card-link compact' href='/personajes/{path_name}'><span class='title'>{name}</span><div class='meta'><span class='pill'>{race}</span><span class='pill'>Nivel {row['level']}</span><span class='pill'>{status}</span></div></a>"
+    body += "</div>"
     return page("Personajes", body)
 
 
@@ -219,36 +262,39 @@ async def character_detail(name: str):
         return page("Personaje no encontrado", "<p>Personaje no encontrado.</p>")
     c = data["character"]
     body = f"<h2>{html.escape(c['name'])}</h2><div class='card'>"
-    body += f"<p>Raza: {html.escape(c['race'])} | Estado: {html.escape(c['status'])} | Nivel: {c['level']}</p>"
-    body += f"<p>Ubicación: {html.escape(c['current_kingdom'] or 'Desconocida')}</p>"
-    body += f"<p>Combates registrados: {data['battle_count']}</p></div>"
+    body += f"<div class='meta'><span class='pill'>Raza: {html.escape(c['race'])}</span><span class='pill'>Estado: {html.escape(c['status'])}</span><span class='pill'>Nivel {c['level']}</span></div>"
+    body += f"<p class='muted'>Ubicación actual</p><p>{html.escape(c['current_kingdom'] or 'Desconocida')}</p>"
+    body += f"<p class='muted'>Combates registrados: {data['battle_count']}</p></div>"
     return page(c['name'], body)
 
 
 @app.get("/mapa", response_class=HTMLResponse)
 async def map_page():
     rows = await get_character_locations()
-    body = "<h2>Mapa actual</h2>"
+    body = "<h2>Mapa actual</h2><div class='grid'>"
     for row in rows:
-        body += f"<div class='card'>{html.escape(row['name'])} ({html.escape(row['race'])}): {html.escape(row['current_kingdom'] or 'Ubicación desconocida')}</div>"
+        body += f"<div class='card compact'><span class='title'>{html.escape(row['name'])}</span><div class='meta'><span class='pill'>{html.escape(row['race'])}</span><span class='pill'>{html.escape(row['current_kingdom'] or 'Ubicación desconocida')}</span></div></div>"
+    body += "</div>"
     return page("Mapa", body)
 
 
 @app.get("/arcos", response_class=HTMLResponse)
 async def arcs_page():
     rows = await get_active_arcs()
-    body = "<h2>Arcos activos</h2>"
+    body = "<h2>Arcos activos</h2><div class='grid'>"
     for row in rows:
-        body += f"<div class='card'>{html.escape(row['name'])}: {html.escape(row['arc_name'])} ({row['arc_progress']}%)</div>"
+        body += f"<div class='card compact'><span class='title'>{html.escape(row['arc_name'])}</span><p class='muted'>{html.escape(row['name'])}</p><span class='pill'>Progreso {row['arc_progress']}%</span></div>"
+    body += "</div>"
     return page("Arcos", body)
 
 
 @app.get("/npcs", response_class=HTMLResponse)
 async def npcs_page():
     rows = await get_npcs(active_only=True)
-    body = "<h2>NPCs activos</h2>"
+    body = "<h2>NPCs activos</h2><div class='grid'>"
     for row in rows:
-        body += f"<div class='card'>{html.escape(row['name'])} - {html.escape(row['role'] or 'sin rol')} en {html.escape(row['kingdom'] or 'desconocido')}</div>"
+        body += f"<div class='card compact'><span class='title'>{html.escape(row['name'])}</span><div class='meta'><span class='pill'>{html.escape(row['role'] or 'sin rol')}</span><span class='pill'>{html.escape(row['kingdom'] or 'desconocido')}</span></div></div>"
+    body += "</div>"
     return page("NPCs", body)
 
 
@@ -257,16 +303,18 @@ async def quotes_page():
     rows = await get_quotes(limit=50)
     body = "<h2>Citas memorables</h2>"
     for row in rows:
-        body += f"<div class='card'>Día {row['day']} - {html.escape(row['character_name'] or 'Desconocido')}: \"{html.escape(row['quote'])}\"</div>"
+        body += f"<div class='card'><p class='quote'>\"{html.escape(row['quote'])}\"</p><div class='meta'><span class='pill'>Día {row['day']}</span><span class='pill'>{html.escape(row['character_name'] or 'Desconocido')}</span></div></div>"
     return page("Citas", body)
 
 
 @app.get("/ranking", response_class=HTMLResponse)
 async def ranking_page():
     rows = await get_power_ranking()
-    body = "<h2>Ranking</h2>"
+    body = "<h2>Ranking</h2><div class='grid'>"
     for i, row in enumerate(rows, start=1):
-        body += f"<div class='card'>{i}. {html.escape(row['name'])} - Nivel {row['level']} | Fama {row['total_fame']} | Victorias {row['wins']}</div>"
+        medal = "Campeón" if i == 1 else f"Puesto {i}"
+        body += f"<div class='card compact'><span class='title'>{i}. {html.escape(row['name'])}</span><div class='meta'><span class='pill'>{medal}</span><span class='pill'>Nivel {row['level']}</span><span class='pill'>Fama {row['total_fame']}</span><span class='pill'>Victorias {row['wins']}</span></div></div>"
+    body += "</div>"
     return page("Ranking", body)
 
 
@@ -275,7 +323,7 @@ async def events_page():
     rows = await get_active_key_events(limit=50)
     body = "<h2>Eventos clave</h2>"
     for row in rows:
-        body += f"<div class='card'>Día {row['day']} [{html.escape(row['event_type'])}] {html.escape(row['title'] or 'Evento')}: {html.escape(row['description'])}</div>"
+        body += f"<div class='card'><span class='title'>{html.escape(row['title'] or 'Evento')}</span><p>{html.escape(row['description'])}</p><div class='meta'><span class='pill'>Día {row['day']}</span><span class='pill'>{html.escape(row['event_type'])}</span></div></div>"
     return page("Eventos", body)
 
 
@@ -285,7 +333,7 @@ async def commerce_page():
     body = "<h2>Comercio reciente</h2>"
     for row in rows:
         origin = row["origin_kingdom"] or "origen desconocido"
-        body += f"<div class='card'>Día {row['day']}: {html.escape(row['character_name'] or 'Desconocido')} movió {html.escape(row['item_name'])} de {html.escape(origin)} a {html.escape(row['destination_kingdom'])}</div>"
+        body += f"<div class='card compact'><span class='title'>{html.escape(row['item_name'])}</span><p class='muted'>{html.escape(row['character_name'] or 'Desconocido')} movió este objeto.</p><div class='meta'><span class='pill'>Día {row['day']}</span><span class='pill'>Desde: {html.escape(origin)}</span><span class='pill'>Hacia: {html.escape(row['destination_kingdom'])}</span></div></div>"
     return page("Comercio", body)
 
 
@@ -295,5 +343,5 @@ async def novel_page():
     body = "<h2>Web novel</h2>"
     for day in days:
         title = day["title"] or f"Día {day['day']}"
-        body += f"<section class='card'><h3>{html.escape(title)}</h3><p class='muted'>Clima: {html.escape(day['weather'] or 'No registrado')}</p><pre>{html.escape(day['full_text'] or day['summary'] or '')}</pre></section>"
+        body += f"<section class='card'><h3>{html.escape(title)}</h3><div class='meta'><span class='pill'>Día {day['day']}</span><span class='pill'>Clima: {html.escape(day['weather'] or 'No registrado')}</span></div><pre>{html.escape(day['full_text'] or day['summary'] or '')}</pre></section>"
     return page("Web Novel", body)
