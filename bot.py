@@ -95,6 +95,47 @@ def format_json_value(value):
         return json.dumps(parsed, ensure_ascii=False)
     return json.dumps(value, ensure_ascii=False)
 
+def quote_tokens(text):
+    cleaned = "".join(ch.lower() if ch.isalnum() else " " for ch in text)
+    return {word for word in cleaned.split() if len(word) > 3}
+
+def quotes_are_similar(left, right):
+    left_tokens = quote_tokens(left)
+    right_tokens = quote_tokens(right)
+    if not left_tokens or not right_tokens:
+        return False
+
+    overlap = len(left_tokens & right_tokens)
+    return overlap / min(len(left_tokens), len(right_tokens)) >= 0.55
+
+def select_featured_quote(quotes, recent_quotes, day):
+    previous_quotes = [q for q in recent_quotes if q["day"] != day]
+    recent_characters = {q["character_name"] for q in previous_quotes[:5]}
+
+    fresh_quotes = []
+    for quote in quotes:
+        if quote["character_name"] in recent_characters:
+            continue
+        if any(quotes_are_similar(quote["quote"], previous["quote"]) for previous in previous_quotes[:12]):
+            continue
+        fresh_quotes.append(quote)
+
+    if fresh_quotes:
+        return random.choice(fresh_quotes)
+
+    non_repeated_character = [q for q in quotes if q["character_name"] not in recent_characters]
+    if non_repeated_character:
+        return random.choice(non_repeated_character)
+
+    non_similar = [
+        q for q in quotes
+        if not any(quotes_are_similar(q["quote"], previous["quote"]) for previous in previous_quotes[:12])
+    ]
+    if non_similar:
+        return random.choice(non_similar)
+
+    return None
+
 async def send_split(ctx, text):
     for part in split_message(text):
         await ctx.send(part)
@@ -218,7 +259,10 @@ async def publish_quote_of_day(channel, day):
     quotes = await get_quotes_for_day(day)
     if not quotes:
         return
-    quote = random.choice(quotes)
+    recent_quotes = await get_quotes(limit=20)
+    quote = select_featured_quote(quotes, recent_quotes, day)
+    if not quote:
+        return
     await channel.send(
         f"💬 **Cita destacada del Día {day}**\n"
         f"*\"{quote['quote']}\"* — {quote['character_name']}"

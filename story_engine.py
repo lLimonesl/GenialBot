@@ -31,7 +31,8 @@ from database import (
     get_season_context,
     sync_world_season,
     get_character_by_name,
-    get_recent_trades
+    get_recent_trades,
+    get_quotes
 )
 
 load_dotenv()
@@ -89,6 +90,11 @@ async def generate_next_day():
     trades = await get_recent_trades(limit=5)
     recent_days = await get_recent_full_days(limit=5)
     recent_focus = extract_recent_character_focus(recent_days, characters)
+    recent_quotes = await get_quotes(limit=12)
+    recent_quote_text = "\n".join(
+        f"- Día {q['day']} | {q['character_name']}: \"{q['quote']}\""
+        for q in recent_quotes
+    ) or "Sin citas recientes registradas."
 
     char_text = "\n".join(
         f"""
@@ -191,6 +197,9 @@ DECISIONES DEL PUBLICO:
 FOCO NARRATIVO RECIENTE:
 {recent_focus or 'Sin foco reciente detectado.'}
 
+CITAS RECIENTES A EVITAR:
+{recent_quote_text}
+
 Narrador omnisciente.
 
 Escribe el Día {current_day + 1}.
@@ -200,6 +209,8 @@ Reparte el protagonismo entre 3 a 5 personajes vivos.
 Evita centrar el día en personajes que ya dominaron el foco reciente, salvo que sea inevitable por una consecuencia directa.
 Incluye al menos una escena breve de otro grupo o personaje secundario para mantener el mundo vivo.
 Las citas memorables deben variar de personaje; evita asignarlas al mismo personaje dominante del foco reciente si otro personaje tuvo una escena fuerte.
+No generes citas parecidas a CITAS RECIENTES A EVITAR.
+Si el personaje con más foco reciente ya tiene varias citas recientes, prioriza una cita memorable de otro personaje.
 No copies ni resumas las secciones de contexto del prompt.
 No incluyas encabezados como PERSONAJES VIVOS, REGLAS DE PODER, INVENTARIO ACTUAL, NPCS ACTIVOS o DECISIONES DEL PUBLICO en la respuesta final.
 La respuesta final debe contener solo la narración del día y, al final, los metadatos con tags si aplican.
@@ -207,6 +218,8 @@ La respuesta final debe contener solo la narración del día y, al final, los me
 FORMATO DE METADATOS:
 Si ocurre algo relevante, añade al final del texto líneas con estos formatos exactos.
 No uses estos tags dentro de la narración normal.
+- Genera como máximo 2 líneas [QUOTE] por día, de personajes distintos.
+- No uses [QUOTE] para frases genéricas; solo para una frase realmente memorable y diferente a citas recientes.
 - Si un personaje obtiene, compra, encuentra, fabrica, equipa o pierde un objeto relevante, DEBES registrar el cambio con [ITEM_GAIN] o [ITEM_LOSE].
 - No inventes recompensas sin causa narrativa; solo registra objetos cuando realmente ocurran en la historia.
 - Si narras una pelea, duelo, emboscada, combate, batalla o enfrentamiento físico/mágico, DEBES añadir una línea [BATTLE].
