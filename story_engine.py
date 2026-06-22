@@ -27,6 +27,24 @@ from database import (
 load_dotenv()
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
+METADATA_TAGS = (
+    "WEATHER",
+    "QUOTE",
+    "ITEM_GAIN",
+    "ITEM_LOSE",
+    "LOCATION",
+    "FAME",
+    "NEW_ARC",
+    "ARC_PROGRESS",
+    "NPC_APPEAR",
+    "NPC_DISAPPEAR",
+    "BATTLE",
+    "LEVEL_UP"
+)
+METADATA_LINE_RE = re.compile(
+    rf"^\s*(?:[-*>`]+\s*)?\[({'|'.join(METADATA_TAGS)})\]\s*(.*)$"
+)
+
 async def generate_next_day():
     current_day, rules = await get_world_state()
     characters = await get_full_characters()
@@ -235,11 +253,12 @@ def build_summary(text: str, limit=700):
     return compact[:limit].rsplit(" ", 1)[0] + "..."
 
 def strip_metadata_tags(text: str):
-    tag_pattern = re.compile(
-        r"^\s*\[(WEATHER|QUOTE|ITEM_GAIN|ITEM_LOSE|LOCATION|FAME|NEW_ARC|ARC_PROGRESS|NPC_APPEAR|NPC_DISAPPEAR|BATTLE|LEVEL_UP)\].*$",
-        re.MULTILINE
-    )
-    return tag_pattern.sub("", text).strip()
+    clean_lines = []
+    for line in text.splitlines():
+        if METADATA_LINE_RE.match(line):
+            continue
+        clean_lines.append(line)
+    return "\n".join(clean_lines).strip()
 
 def append_metadata_summary(text: str, metadata: dict):
     sections = []
@@ -304,7 +323,11 @@ def extract_metadata(text: str):
     }
 
     for raw_line in text.splitlines():
-        line = raw_line.strip()
+        match = METADATA_LINE_RE.match(raw_line)
+        if not match:
+            continue
+
+        line = f"[{match.group(1)}] {match.group(2).strip()}"
 
         if line.startswith("[WEATHER]"):
             metadata["weather"] = line.replace("[WEATHER]", "", 1).strip()

@@ -32,10 +32,36 @@ intents.message_content = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 bot.remove_command("help")
 
+RAW_METADATA_PREFIXES = (
+    "[WEATHER]",
+    "[QUOTE]",
+    "[ITEM_GAIN]",
+    "[ITEM_LOSE]",
+    "[LOCATION]",
+    "[FAME]",
+    "[NEW_ARC]",
+    "[ARC_PROGRESS]",
+    "[NPC_APPEAR]",
+    "[NPC_DISAPPEAR]",
+    "[BATTLE]",
+    "[LEVEL_UP]"
+)
+
+def hide_raw_metadata_tags(text):
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip().lstrip("-*>` ").strip()
+        if stripped.startswith(RAW_METADATA_PREFIXES):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
+
 async def send_long_message(channel_id, text):
     channel = bot.get_channel(channel_id)
     if not channel:
         return
+
+    text = hide_raw_metadata_tags(text)
 
     max_length = 2000
     for i in range(0, len(text), max_length):
