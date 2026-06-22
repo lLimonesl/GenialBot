@@ -2,6 +2,7 @@
 import json
 import re
 from db import get_pool
+from load_characters import CHARACTERS
 from load_world import WORLD_META, WORLD_RULES, SOCIAL_HIERARCHY
 
 # ---------- INIT DB (solo PostgreSQL) ----------
@@ -1135,6 +1136,7 @@ async def apply_unlocked_ability(vote_id: int, ability: str):
 async def reset_world_progress():
     pool = await get_pool()
     async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM ability_unlock_votes")
         await conn.execute("DELETE FROM daily_logs")
         await conn.execute("DELETE FROM votes")
         await conn.execute("DELETE FROM character_arcs")
@@ -1145,16 +1147,35 @@ async def reset_world_progress():
         await conn.execute("DELETE FROM battle_logs")
         await conn.execute("DELETE FROM narrative_memory")
         await conn.execute("DELETE FROM key_events")
-        await conn.execute("DELETE FROM ability_unlock_votes")
         await conn.execute("DELETE FROM trade_logs")
 
-        await conn.execute("""
-            UPDATE characters
-            SET status = 'Vivo',
-                level = 1,
-                current_kingdom = NULL,
-                notes = NULL
-        """)
+        for character in CHARACTERS:
+            await conn.execute("""
+                UPDATE characters
+                SET race = $2,
+                    social_status = $3,
+                    status = 'Vivo',
+                    level = 1,
+                    weapon = $4,
+                    amulet = $5,
+                    pet = $6::jsonb,
+                    abilities = $7::jsonb,
+                    passives = $8::jsonb,
+                    final_move = $9::jsonb,
+                    current_kingdom = NULL,
+                    notes = NULL
+                WHERE name ILIKE $1
+            """,
+                character["name"],
+                character["race"],
+                character["social_status"],
+                character.get("weapon"),
+                character.get("amulet"),
+                json.dumps(character.get("pet")),
+                json.dumps(character.get("abilities")),
+                json.dumps(character.get("passives")),
+                json.dumps(character.get("final_move")),
+            )
 
         await conn.execute("""
             UPDATE world

@@ -133,6 +133,12 @@ async def send_split(ctx, text):
     for part in split_message(text):
         await ctx.send(part)
 
+def remove_file_safely(path):
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
 async def send_commands_help(ctx):
     msg = """
 **Comandos disponibles**
@@ -464,11 +470,14 @@ async def daily_story_task():
 
     channel = bot.get_channel(CHANNEL_ID)
 
-    # Enviar PDF
-    await channel.send(
-        content=f"📄 **Archivo del Día {day}**",
-        file=discord.File(pdf_path)
-    )
+    # Enviar PDF y borrar archivo temporal local.
+    try:
+        await channel.send(
+            content=f"📄 **Archivo del Día {day}**",
+            file=discord.File(pdf_path)
+        )
+    finally:
+        remove_file_safely(pdf_path)
 
     await publish_critical_decision(channel, day, clean_text)
     await publish_ability_votes(channel, day, level_ups)
@@ -858,7 +867,12 @@ async def dbtest(ctx):
 @bot.command()
 @commands.has_permissions(administrator=True)
 async def resetear_mundo(ctx):
-    await reset_world_progress()
+    try:
+        await reset_world_progress()
+    except Exception as exc:
+        await ctx.send(f"❌ No pude resetear el mundo: {exc}")
+        return
+
     await ctx.send(
         "🔄 **MUNDO REINICIADO**\n"
         "• Día vuelto a 0\n"
@@ -902,11 +916,14 @@ async def generar_dia(ctx):
     from pdf_exporter import export_day_to_pdf
     pdf_path = export_day_to_pdf(day, title, clean_text)
 
-    # Enviar PDF
-    await ctx.send(
-        content=f"📄 **Archivo del Día {day}**",
-        file=discord.File(pdf_path)
-    )
+    # Enviar PDF y borrar archivo temporal local.
+    try:
+        await ctx.send(
+            content=f"📄 **Archivo del Día {day}**",
+            file=discord.File(pdf_path)
+        )
+    finally:
+        remove_file_safely(pdf_path)
 
     if channel:
         await publish_critical_decision(channel, day, clean_text)

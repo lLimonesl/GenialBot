@@ -235,4 +235,5 @@ async def main():
 
     print("✅ TODOS los personajes fueron cargados correctamente.")
 
-asyncio.run(main())
+if __name__ == "__main__":
+    asyncio.run(main())
