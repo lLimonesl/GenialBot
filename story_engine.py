@@ -1,6 +1,7 @@
 # story_engine.py
 import os
 import re
+import json
 from openai import OpenAI
 from dotenv import load_dotenv
 from database import (
@@ -81,6 +82,61 @@ PROMPT_LEAK_HEADINGS = (
     "FORMATO DE METADATOS:",
 )
 
+def parse_json_field(value):
+    if value is None:
+        return None
+    if isinstance(value, str):
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError:
+            return value
+    return value
+
+def format_prompt_value(value, indent=0):
+    value = parse_json_field(value)
+    prefix = "  " * indent
+    if value is None or value == {} or value == []:
+        return "No definido."
+    if isinstance(value, dict):
+        if {"name", "description"}.issubset(value.keys()):
+            parts = [f"{value['name']}: {value['description']}"]
+            if value.get("limits") and value["limits"] != "Sin limite adicional definido.":
+                parts.append(f"Limites: {value['limits']}")
+            if value.get("cost") and value["cost"] != "Sin coste adicional definido.":
+                parts.append(f"Coste: {value['cost']}")
+            if value.get("cooldown") and value["cooldown"] != "Sin enfriamiento definido.":
+                parts.append(f"Enfriamiento/duracion: {value['cooldown']}")
+            if value.get("requirement"):
+                parts.append(f"Requisito: {value['requirement']}")
+            if value.get("notes"):
+                parts.append(f"Notas: {value['notes']}")
+            return " | ".join(parts)
+        lines = []
+        for key, item in value.items():
+            lines.append(f"{prefix}- {str(key).replace('_', ' ').title()}: {format_prompt_value(item, indent + 1)}")
+        return "\n".join(lines)
+    if isinstance(value, list):
+        return "\n".join(f"{prefix}- {format_prompt_value(item, indent + 1)}" for item in value)
+    if isinstance(value, bool):
+        return "Si" if value else "No"
+    return str(value)
+
+def format_character_for_prompt(character):
+    return f"""
+- {character['name']} ({character['race']})
+  Nivel actual: {character['level']}
+  Arma: {character['weapon'] or 'N/A'}
+  Amuleto: {character['amulet'] or 'N/A'}
+  Mascota:
+{format_prompt_value(character['pet'], 2)}
+  Habilidades:
+{format_prompt_value(character['abilities'], 2)}
+  Pasivas:
+{format_prompt_value(character['passives'], 2)}
+  Movimiento final:
+{format_prompt_value(character['final_move'], 2)}
+""".strip()
+
 async def generate_next_day():
     current_day, rules = await get_world_state()
     characters = await get_full_characters()
@@ -102,19 +158,7 @@ async def generate_next_day():
         for q in recent_quotes
     ) or "Sin citas recientes registradas."
 
-    char_text = "\n".join(
-        f"""
-- {c['name']} ({c['race']})
-  Nivel actual: {c['level']}
-  Arma: {c['weapon']}
-  Amuleto: {c['amulet']}
-  Mascota: {c['pet']}
-  Habilidades: {c['abilities']}
-  Pasivas: {c['passives']}
-  Movimiento final: {c['final_move']}
-""".strip()
-        for c in characters
-    )
+    char_text = "\n\n".join(format_character_for_prompt(c) for c in characters)
 
     arc_text = "\n".join(
         f"- {a['name']}: {a['arc_name']} (progreso {a['arc_progress']}%)"
@@ -548,10 +592,13 @@ No contradigas sus limitaciones ni inventes poderes excesivos.
 Personaje: {character['name']}
 Raza: {character['race']}
 Nivel: {character['level']}
-Habilidades actuales: {character['abilities']}
-Pasivas: {character['passives']}
-Arma: {character['weapon']}
-Movimiento final: {character['final_move']}
+Habilidades actuales:
+{format_prompt_value(character['abilities'])}
+Pasivas:
+{format_prompt_value(character['passives'])}
+Arma: {character['weapon'] or 'N/A'}
+Movimiento final:
+{format_prompt_value(character['final_move'])}
 
 Responde solo en JSON con este formato exacto:
 {{"abilities": [{{"name": "Nombre", "description": "Descripción breve"}}, {{"name": "Nombre", "description": "Descripción breve"}}, {{"name": "Nombre", "description": "Descripción breve"}}]}}
@@ -562,7 +609,6 @@ Responde solo en JSON con este formato exacto:
         temperature=0.4
     )
     try:
-        import json
         content = response.choices[0].message.content.strip()
         if content.startswith("```"):
             content = content.strip("`").replace("json\n", "", 1).strip()
