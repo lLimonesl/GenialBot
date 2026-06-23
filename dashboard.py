@@ -108,6 +108,8 @@ def page(title, body):
       --accent: #7dd3fc;
       --accent-strong: #c084fc;
       --gold: #facc15;
+      --emerald: #34d399;
+      --danger: #fb7185;
       --shadow: 0 24px 80px rgba(0, 0, 0, 0.36);
     }}
     * {{ box-sizing: border-box; }}
@@ -129,6 +131,19 @@ def page(title, body):
       background-image: linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
       background-size: 44px 44px;
       mask-image: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent 75%);
+      animation: grid-drift 26s linear infinite;
+    }}
+    body::after {{
+      content: "";
+      position: fixed;
+      inset: auto 8% 5% auto;
+      width: 280px;
+      height: 280px;
+      border-radius: 999px;
+      pointer-events: none;
+      background: radial-gradient(circle, rgba(125, 211, 252, 0.12), transparent 64%);
+      filter: blur(6px);
+      animation: orb-float 9s ease-in-out infinite alternate;
     }}
     header {{
       position: sticky;
@@ -150,6 +165,7 @@ def page(title, body):
       background: linear-gradient(135deg, rgba(250, 204, 21, 0.18), rgba(125, 211, 252, 0.16));
       box-shadow: 0 0 30px rgba(250, 204, 21, 0.12);
       font-size: 24px;
+      animation: sigil-pulse 4.8s ease-in-out infinite;
     }}
     h1, h2, h3, p {{ margin-top: 0; }}
     h1 {{ margin-bottom: 2px; font-size: clamp(1.7rem, 4vw, 2.8rem); letter-spacing: -0.04em; }}
@@ -188,6 +204,7 @@ def page(title, body):
       margin: 16px 0;
       border-radius: 26px;
       box-shadow: var(--shadow);
+      animation: card-rise 420ms ease both;
     }}
     .card.compact {{ padding: 18px 20px; }}
     .card::after {{
@@ -319,6 +336,71 @@ def page(title, body):
     .trait-card {{ transition: transform 160ms ease, border-color 160ms ease; }}
     .trait-card:hover {{ transform: translateY(-2px); border-color: rgba(125, 211, 252, 0.38); }}
     .trait-card p {{ margin-bottom: 0; color: #e5edf8; line-height: 1.55; }}
+    .progress-overview {{
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 14px;
+      margin: 18px 0 24px;
+    }}
+    .progress-card {{
+      border-color: rgba(52, 211, 153, 0.24);
+      background:
+        radial-gradient(circle at 18% 0%, rgba(52, 211, 153, 0.14), transparent 32%),
+        linear-gradient(145deg, rgba(18, 24, 39, 0.92), rgba(15, 23, 42, 0.72));
+    }}
+    .progress-head {{ display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 16px; }}
+    .progress-head .title {{ margin-bottom: 3px; }}
+    .delta {{
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(52, 211, 153, 0.28);
+      background: rgba(6, 78, 59, 0.28);
+      color: #bbf7d0;
+      font-weight: 800;
+      font-size: 0.82rem;
+      white-space: nowrap;
+    }}
+    .progress-row {{ margin-top: 16px; }}
+    .progress-label {{ display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; color: #dbeafe; font-weight: 800; }}
+    .progress-label small {{ color: var(--muted); font-weight: 700; }}
+    .meter {{
+      position: relative;
+      height: 16px;
+      overflow: hidden;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      background: rgba(15, 23, 42, 0.88);
+      box-shadow: inset 0 1px 8px rgba(0,0,0,0.32);
+    }}
+    .meter-fill {{
+      height: 100%;
+      min-width: 8px;
+      border-radius: inherit;
+      box-shadow: 0 0 22px rgba(125, 211, 252, 0.22);
+      animation: fill-meter 780ms cubic-bezier(.2,.8,.2,1) both;
+      transform-origin: left center;
+    }}
+    .meter-fill.level {{ background: linear-gradient(90deg, #38bdf8, #818cf8, #c084fc); }}
+    .meter-fill.fame {{ background: linear-gradient(90deg, #f59e0b, #facc15, #fde68a); box-shadow: 0 0 22px rgba(250, 204, 21, 0.28); }}
+    .sparkline {{ display: grid; grid-auto-flow: column; grid-auto-columns: minmax(7px, 1fr); align-items: end; gap: 4px; height: 78px; margin-top: 16px; padding: 10px; border-radius: 18px; background: rgba(2, 6, 23, 0.34); border: 1px solid rgba(148, 163, 184, 0.12); }}
+    .spark {{
+      min-height: 5px;
+      border-radius: 999px 999px 4px 4px;
+      background: linear-gradient(180deg, rgba(125, 211, 252, 0.96), rgba(52, 211, 153, 0.7));
+      box-shadow: 0 0 18px rgba(45, 212, 191, 0.16);
+      transition: transform 160ms ease, filter 160ms ease;
+    }}
+    .spark:hover {{ transform: scaleY(1.08); filter: brightness(1.2); }}
+    .progress-point {{
+      margin-top: 16px;
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(15, 23, 42, 0.5);
+      border: 1px solid rgba(148, 163, 184, 0.12);
+    }}
     .muted {{ color: var(--muted); }}
     pre {{
       white-space: pre-wrap;
@@ -328,6 +410,29 @@ def page(title, body):
       color: #e5edf8;
     }}
     strong {{ color: #ffffff; }}
+    @keyframes card-rise {{
+      from {{ opacity: 0; transform: translateY(10px); }}
+      to {{ opacity: 1; transform: translateY(0); }}
+    }}
+    @keyframes fill-meter {{
+      from {{ transform: scaleX(0.04); filter: saturate(0.7); }}
+      to {{ transform: scaleX(1); filter: saturate(1); }}
+    }}
+    @keyframes grid-drift {{
+      from {{ background-position: 0 0, 0 0; }}
+      to {{ background-position: 44px 44px, 44px 44px; }}
+    }}
+    @keyframes orb-float {{
+      from {{ transform: translate3d(0, 0, 0) scale(1); opacity: 0.64; }}
+      to {{ transform: translate3d(-34px, -28px, 0) scale(1.12); opacity: 1; }}
+    }}
+    @keyframes sigil-pulse {{
+      0%, 100% {{ box-shadow: 0 0 30px rgba(250, 204, 21, 0.12); }}
+      50% {{ box-shadow: 0 0 38px rgba(125, 211, 252, 0.24), 0 0 14px rgba(250, 204, 21, 0.16); }}
+    }}
+    @media (prefers-reduced-motion: reduce) {{
+      *, *::before, *::after {{ animation-duration: 1ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: 1ms !important; }}
+    }}
     @media (max-width: 720px) {{
       .hero {{ padding: 22px 16px 16px; }}
       main {{ padding: 22px 16px 42px; }}
@@ -337,6 +442,8 @@ def page(title, body):
       .card {{ padding: 18px; border-radius: 18px; }}
       .grid {{ grid-template-columns: 1fr; }}
       .profile-hero {{ grid-template-columns: 1fr; padding: 20px; }}
+      .progress-head {{ display: block; }}
+      .delta {{ margin-top: 10px; }}
       .avatar {{ width: 62px; height: 62px; border-radius: 20px; }}
     }}
   </style>
@@ -536,21 +643,57 @@ async def progression_page():
     rows = await get_character_progression()
     grouped = {}
     max_level = 1
-    max_fame = 1
+    max_fame_abs = 1
+    max_day = 0
     for row in rows:
         grouped.setdefault(row["character_name"], []).append(row)
         max_level = max(max_level, row["level"])
-        max_fame = max(max_fame, row["total_fame"])
+        max_fame_abs = max(max_fame_abs, abs(row["total_fame"] or 0))
+        max_day = max(max_day, row["day"])
     body = "<section class='p-5 sm:p-7'><p class='mb-2 text-sm font-bold uppercase tracking-[0.25em] text-emerald-300/80'>Crecimiento</p><h2>Progresión de personajes</h2>"
     if not grouped:
         body += "<div class='card empty'>La progresión empezará a registrarse desde el próximo día generado.</div></section>"
         return page("Progresión", body)
-    for name, points in grouped.items():
-        body += f"<div class='card'><span class='title'>{html.escape(name)}</span>"
-        for point in points[-20:]:
-            level_width = max(4, int((point["level"] / max_level) * 100))
-            fame_width = max(4, int((point["total_fame"] / max_fame) * 100)) if max_fame else 4
-            body += f"<div class='my-3'><div class='meta'><span class='pill'>Día {point['day']}</span><span class='pill'>Nivel {point['level']}</span><span class='pill'>Fama {point['total_fame']}</span></div><div class='mt-2 h-2 rounded-full bg-slate-800'><div class='h-2 rounded-full bg-sky-300' style='width:{level_width}%'></div></div><div class='mt-1 h-2 rounded-full bg-slate-800'><div class='h-2 rounded-full bg-amber-300' style='width:{fame_width}%'></div></div></div>"
+    body += "<div class='progress-overview'>"
+    body += info_card("Personajes con progreso", str(len(grouped)), accent=True)
+    body += info_card("Nivel máximo actual", str(max_level))
+    body += info_card("Fama de referencia", f"±{max_fame_abs}")
+    body += info_card("Último día registrado", f"Día {max_day}")
+    body += "</div>"
+
+    sorted_groups = sorted(
+        grouped.items(),
+        key=lambda item: (item[1][-1]["level"] or 0, item[1][-1]["total_fame"] or 0, item[0]),
+        reverse=True,
+    )
+    for name, points in sorted_groups:
+        recent_points = points[-20:]
+        latest = points[-1]
+        first_recent = recent_points[0]
+        level_delta = latest["level"] - first_recent["level"]
+        fame_delta = (latest["total_fame"] or 0) - (first_recent["total_fame"] or 0)
+        level_width = max(4, min(100, int((latest["level"] / max_level) * 100)))
+        fame_width = max(4, min(100, int((abs(latest["total_fame"] or 0) / max_fame_abs) * 100)))
+        body += "<div class='card progress-card'>"
+        body += "<div class='progress-head'>"
+        body += f"<div><span class='title'>{html.escape(name)}</span><p class='muted'>Último registro: día {latest['day']}. Comparado contra el máximo global actual.</p></div>"
+        body += f"<span class='delta'>Nivel {level_delta:+d} · Fama {fame_delta:+d}</span>"
+        body += "</div>"
+        body += f"<div class='progress-row'><div class='progress-label'><span>Nivel actual</span><small>{latest['level']} / {max_level}</small></div><div class='meter' title='Nivel {latest['level']} de {max_level}'><div class='meter-fill level' style='width:{level_width}%'></div></div></div>"
+        body += f"<div class='progress-row'><div class='progress-label'><span>Fama acumulada</span><small>{latest['total_fame']} / ±{max_fame_abs}</small></div><div class='meter' title='Fama {latest['total_fame']} contra referencia ±{max_fame_abs}'><div class='meter-fill fame' style='width:{fame_width}%'></div></div></div>"
+        body += "<div class='sparkline' aria-label='Tendencia de nivel de los últimos registros'>"
+        for point in recent_points:
+            spark_height = max(8, min(100, int((point["level"] / max_level) * 100)))
+            body += f"<span class='spark' style='height:{spark_height}%' title='Día {point['day']}: nivel {point['level']}, fama {point['total_fame']}'></span>"
+        body += "</div>"
+        for point in recent_points[-6:]:
+            point_level_width = max(4, min(100, int((point["level"] / max_level) * 100)))
+            point_fame_width = max(4, min(100, int((abs(point["total_fame"] or 0) / max_fame_abs) * 100)))
+            body += "<div class='progress-point'>"
+            body += f"<div class='meta'><span class='pill'>Día {point['day']}</span><span class='pill'>Nivel {point['level']}</span><span class='pill'>Fama {point['total_fame']}</span></div>"
+            body += f"<div class='progress-row'><div class='progress-label'><span>Nivel</span><small>{point_level_width}% del máximo actual</small></div><div class='meter'><div class='meter-fill level' style='width:{point_level_width}%'></div></div></div>"
+            body += f"<div class='progress-row'><div class='progress-label'><span>Fama</span><small>{point_fame_width}% de referencia</small></div><div class='meter'><div class='meter-fill fame' style='width:{point_fame_width}%'></div></div></div>"
+            body += "</div>"
         body += "</div>"
     body += "</section>"
     return page("Progresión", body)
