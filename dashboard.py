@@ -120,6 +120,22 @@ def empty_card(message):
     return f"<div class='card empty'>{html.escape(message)}</div>"
 
 
+def excerpt_text(value, limit=260):
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1].rstrip() + "..."
+
+
+def event_type_label(event_type):
+    labels = {
+        "day": "Capítulo",
+        "battle": "Combate",
+        "arc_completed": "Arco completado",
+    }
+    return labels.get(str(event_type or "").lower(), humanize_key(event_type or "Evento"))
+
+
 def list_value(value):
     if value is None:
         return []
@@ -175,7 +191,7 @@ def page(title, body):
         }}
       }});
     }}, {{ threshold: 0.12 }});
-    document.querySelectorAll('.reveal, .card, .info-card, .profile-hero, .section-heading').forEach((node) => observer.observe(node));
+    document.querySelectorAll('.reveal, .card, .info-card, .profile-hero, .view-hero, .section-heading').forEach((node) => observer.observe(node));
   </script>
 </body>
 </html>""")
@@ -346,16 +362,31 @@ async def kingdom_detail_page(kingdom: str):
 @app.get("/timeline", response_class=HTMLResponse)
 async def timeline_page():
     rows = await get_timeline_events(limit=250)
-    body = "<section class='p-5 sm:p-7'><p class='mb-2 text-sm font-bold uppercase tracking-[0.25em] text-violet-300/80'>Cronología</p><h2>Línea de tiempo</h2>"
+    total_days = len({row["day"] for row in rows if row["day"]})
+    body = "<section class='timeline-page'>"
+    body += "<div class='view-hero timeline-hero'><p>Cronología</p><h2>Línea de tiempo</h2><span>Eventos ordenados del más reciente al más antiguo, con capítulos, combates y cambios persistentes del mundo.</span></div>"
     if not rows:
         body += empty_card("La línea de tiempo se llenará cuando existan eventos registrados.")
+        body += "</section>"
+        return page("Timeline", body)
+    body += "<div class='stat-grid'>"
+    body += info_card("Eventos registrados", str(len(rows)), accent=True)
+    body += info_card("Días narrativos", str(total_days))
+    body += info_card("Último día visible", f"Día {rows[0]['day']}")
+    body += "</div><div class='timeline-list'>"
     current_day = None
     for row in rows:
         if row["day"] != current_day:
             current_day = row["day"]
-            body += f"<h3 class='mt-8'>Día {current_day}</h3>"
-        body += f"<details class='card compact' open><summary><strong>{html.escape(row['title'] or row['event_type'])}</strong> <span class='pill'>{html.escape(row['event_type'])}</span></summary><p class='muted mt-3'>{html.escape(row['description'] or '')}</p></details>"
-    body += "</section>"
+            day_label = "Origen" if current_day == 0 else f"Día {current_day}"
+            body += f"<div class='timeline-day'><span>{html.escape(day_label)}</span></div>"
+        title = row["title"] or event_type_label(row["event_type"])
+        description = excerpt_text(row["description"], 420)
+        body += "<article class='card timeline-item'>"
+        body += f"<div class='timeline-node' aria-hidden='true'></div><div><div class='timeline-item-head'><strong>{html.escape(title)}</strong><span class='pill'>{html.escape(event_type_label(row['event_type']))}</span></div>"
+        body += f"<p class='muted'>{html.escape(description or 'Sin descripción registrada.')}</p></div>"
+        body += "</article>"
+    body += "</div></section>"
     return page("Timeline", body)
 
 
@@ -373,7 +404,8 @@ async def progression_page():
         max_day = max(max_day, row["day"])
     level_reference = max(100, ((max_level + 9) // 10) * 10)
     fame_reference = max(50, ((max_fame_abs + 9) // 10) * 10)
-    body = "<section class='p-5 sm:p-7'><p class='mb-2 text-sm font-bold uppercase tracking-[0.25em] text-emerald-300/80'>Crecimiento</p><h2>Progresión de personajes</h2>"
+    body = "<section class='progression-page'>"
+    body += "<div class='view-hero progression-hero'><p>Crecimiento</p><h2>Progresión de personajes</h2><span>Lectura rápida de nivel, fama y tendencia reciente sin comparar injustamente escalas distintas.</span></div>"
     if not grouped:
         body += "<div class='card empty'>La progresión empezará a registrarse desde el próximo día generado.</div></section>"
         return page("Progresión", body)
@@ -395,12 +427,17 @@ async def progression_page():
         first_recent = recent_points[0]
         level_delta = latest["level"] - first_recent["level"]
         fame_delta = (latest["total_fame"] or 0) - (first_recent["total_fame"] or 0)
+        trend = "estable"
+        if level_delta > 0 or fame_delta > 0:
+            trend = "en ascenso"
+        if level_delta < 0 or fame_delta < 0:
+            trend = "en tensión"
         level_width = progress_width(latest["level"], level_reference)
         fame_width = progress_width(latest["total_fame"], fame_reference)
         fame_tone = "negative" if (latest["total_fame"] or 0) < 0 else "positive"
         body += "<div class='card progress-card'>"
         body += "<div class='progress-head'>"
-        body += f"<div><span class='title'>{html.escape(name)}</span><p class='muted'>Último registro: día {latest['day']}. Barras medidas contra una escala estable, no contra otros personajes.</p></div>"
+        body += f"<div><span class='title'>{html.escape(name)}</span><p class='muted'>Último registro: día {latest['day']}. Tendencia reciente: {html.escape(trend)}.</p></div>"
         body += f"<span class='delta'>Nivel {level_delta:+d} · Fama {fame_delta:+d}</span>"
         body += "</div>"
         body += f"<div class='progress-row'><div class='progress-label'><span>Nivel actual</span><small>{latest['level']} / {level_reference}</small></div><div class='meter' title='Nivel {latest['level']} de {level_reference}'><div class='meter-fill level' style='width:{level_width}%'></div></div></div>"
@@ -410,15 +447,10 @@ async def progression_page():
             spark_height = progress_width(point["level"], level_reference, minimum=8)
             body += f"<span class='spark' style='height:{spark_height}%' title='Día {point['day']}: nivel {point['level']}, fama {point['total_fame']}'></span>"
         body += "</div>"
+        body += "<div class='progress-ticks'>"
         for point in recent_points[-6:]:
-            point_level_width = progress_width(point["level"], level_reference)
-            point_fame_width = progress_width(point["total_fame"], fame_reference)
-            point_fame_tone = "negative" if (point["total_fame"] or 0) < 0 else "positive"
-            body += "<div class='progress-point'>"
             body += f"<div class='meta'><span class='pill'>Día {point['day']}</span><span class='pill'>Nivel {point['level']}</span><span class='pill'>Fama {point['total_fame']}</span></div>"
-            body += f"<div class='progress-row'><div class='progress-label'><span>Nivel</span><small>{point['level']} / {level_reference}</small></div><div class='meter'><div class='meter-fill level' style='width:{point_level_width}%'></div></div></div>"
-            body += f"<div class='progress-row'><div class='progress-label'><span>Fama</span><small>{point['total_fame']} / ±{fame_reference}</small></div><div class='meter'><div class='meter-fill fame {point_fame_tone}' style='width:{point_fame_width}%'></div></div></div>"
-            body += "</div>"
+        body += "</div>"
         body += "</div>"
     body += "</section>"
     return page("Progresión", body)
@@ -528,10 +560,25 @@ async def commerce_page():
 @app.get("/novel", response_class=HTMLResponse)
 async def novel_page():
     days = await get_all_days()
-    body = "<h2>Web novel</h2>"
+    body = "<section class='novel-page'>"
+    body += "<div class='view-hero novel-hero'><p>Lectura</p><h2>Web novel</h2><span>Capítulos completos del mundo, listos para leer en orden cronológico.</span></div>"
+    if days:
+        body += "<div class='stat-grid'>"
+        body += info_card("Capítulos", str(len(days)), accent=True)
+        body += info_card("Primer día", f"Día {days[0]['day']}")
+        body += info_card("Último día", f"Día {days[-1]['day']}")
+        body += "</div><div class='novel-stack'>"
     for day in days:
         title = day["title"] or f"Día {day['day']}"
-        body += f"<section class='card'><h3>{html.escape(title)}</h3><div class='meta'><span class='pill'>Día {day['day']}</span><span class='pill'>Clima: {html.escape(day['weather'] or 'No registrado')}</span></div><pre>{html.escape(day['full_text'] or day['summary'] or '')}</pre></section>"
+        text = day["full_text"] or day["summary"] or "Sin texto registrado."
+        body += "<article class='card novel-chapter'>"
+        body += f"<div class='chapter-kicker'>Capítulo {day['day']}</div><h3>{html.escape(title)}</h3>"
+        body += f"<div class='meta'><span class='pill'>Día {day['day']}</span><span class='pill'>Clima: {html.escape(day['weather'] or 'No registrado')}</span></div>"
+        body += f"<pre>{html.escape(text)}</pre>"
+        body += "</article>"
+    if days:
+        body += "</div>"
     if not days:
         body += empty_card("La web novel aparecerá cuando existan días generados.")
+    body += "</section>"
     return page("Web Novel", body)
