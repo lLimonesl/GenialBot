@@ -1,0 +1,154 @@
+:root {
+  --ink: #f8fbff;
+  --veil: rgba(255, 255, 255, 0.08);
+  --machine-edge: rgba(255, 255, 255, 0.14);
+  --violet-core: #9d7cff;
+  --cyan-core: #76e4ff;
+}
+
+body {
+  font-family: "Plus Jakarta Sans", "Geist", ui-sans-serif, system-ui, sans-serif !important;
+  background:
+    radial-gradient(circle at 18% 12%, rgba(118, 228, 255, 0.16), transparent 30rem),
+    radial-gradient(circle at 82% 4%, rgba(157, 124, 255, 0.18), transparent 28rem),
+    linear-gradient(145deg, #03050b 0%, #090b16 52%, #111022 100%) !important;
+}
+
+body::before {
+  background-image:
+    linear-gradient(rgba(255,255,255,0.026) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.026) 1px, transparent 1px) !important;
+  background-size: 68px 68px !important;
+  animation: premium-grid-drift 42s cubic-bezier(0.32, 0.72, 0, 1) infinite alternate !important;
+}
+
+header {
+  top: 18px !important;
+  width: min(1180px, calc(100% - 28px));
+  margin: 0 auto;
+  border: 1px solid var(--machine-edge) !important;
+  border-radius: 32px;
+  background: rgba(5, 8, 18, 0.68) !important;
+  box-shadow: 0 26px 80px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.hero {
+  padding: 24px !important;
+}
+
+.mark,
+.avatar {
+  border-radius: 22px !important;
+  border-color: rgba(118, 228, 255, 0.32) !important;
+  background: linear-gradient(145deg, rgba(118, 228, 255, 0.18), rgba(157, 124, 255, 0.16)) !important;
+}
+
+h1,
+h2 {
+  font-family: "Clash Display", "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  letter-spacing: -0.06em !important;
+}
+
+h1 {
+  font-size: clamp(2rem, 5vw, 4rem) !important;
+}
+
+h2 {
+  font-size: clamp(2.2rem, 6vw, 5rem) !important;
+  line-height: 0.95;
+}
+
+nav {
+  gap: 9px !important;
+}
+
+nav a {
+  border: 1px solid rgba(255, 255, 255, 0.11) !important;
+  background: rgba(255, 255, 255, 0.055) !important;
+  transition: transform 700ms cubic-bezier(0.32, 0.72, 0, 1), background 700ms cubic-bezier(0.32, 0.72, 0, 1), border-color 700ms cubic-bezier(0.32, 0.72, 0, 1) !important;
+}
+
+nav a:hover {
+  transform: translateY(-2px) scale(1.02) !important;
+  border-color: rgba(118, 228, 255, 0.42) !important;
+  background: rgba(118, 228, 255, 0.12) !important;
+}
+
+main > div {
+  border-radius: 40px !important;
+  background: rgba(255, 255, 255, 0.035) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 40px 110px rgba(0,0,0,0.26) !important;
+}
+
+.card,
+.info-card,
+.profile-hero {
+  border: 1px solid rgba(255, 255, 255, 0.11) !important;
+  border-radius: 32px !important;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,0.09), rgba(255,255,255,0.035)),
+    rgba(5, 8, 18, 0.72) !important;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.09), 0 28px 90px rgba(0,0,0,0.24) !important;
+  transition: transform 800ms cubic-bezier(0.32, 0.72, 0, 1), border-color 800ms cubic-bezier(0.32, 0.72, 0, 1) !important;
+}
+
+.card:hover {
+  transform: translateY(-4px);
+  border-color: rgba(118, 228, 255, 0.34) !important;
+}
+
+.eyebrow {
+  display: inline-flex;
+  margin-bottom: 16px;
+  padding: 7px 11px;
+  border: 1px solid rgba(118, 228, 255, 0.22);
+  border-radius: 999px;
+  color: #b9f3ff;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  background: rgba(118, 228, 255, 0.08);
+}
+
+.ai-memory-hero {
+  padding-top: 64px !important;
+  padding-bottom: 80px !important;
+}
+
+.ai-memory-grid {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  margin: 34px 0 48px;
+}
+
+.ai-run .title,
+.prompt-snapshot .title {
+  color: var(--ink);
+}
+
+@keyframes premium-grid-drift {
+  from { transform: translate3d(0, 0, 0); opacity: 0.72; }
+  to { transform: translate3d(-18px, 24px, 0); opacity: 0.42; }
+}
+
+@media (max-width: 720px) {
+  header {
+    top: 10px !important;
+    width: calc(100% - 16px);
+    border-radius: 24px;
+  }
+
+  .hero {
+    padding: 18px !important;
+  }
+
+  main {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+
+  h2 {
+    font-size: clamp(2rem, 14vw, 3.4rem) !important;
+  }
+}

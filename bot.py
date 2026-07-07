@@ -3,7 +3,9 @@ import json
 import random
 import asyncio
 import discord
+from discord import app_commands
 from discord.ext import commands, tasks
+from app.settings import DISCORD_GUILD_ID, ENABLE_LEGACY_PREFIX_COMMANDS, get_int_env
 from database import init_db
 from story_engine import generate_next_day, detect_critical_decision, suggest_abilities_for_level_up, suggest_vote_consequence
 from dotenv import load_dotenv
@@ -27,15 +29,16 @@ from pdf_exporter import export_day_to_pdf
 load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID") or os.getenv("STORY_CHANNEL_ID"))
+CHANNEL_ID = get_int_env("CHANNEL_ID", fallback_name="STORY_CHANNEL_ID")
 
 # Intents necesarios
 intents = discord.Intents.default()
-intents.message_content = True
+intents.message_content = ENABLE_LEGACY_PREFIX_COMMANDS
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 bot.remove_command("help")
 dashboard_started = False
+commands_synced = False
 
 RAW_METADATA_PREFIXES = (
     "[WEATHER]",
@@ -438,8 +441,14 @@ async def close_votes_task():
 
 @bot.event
 async def on_ready():
-    global dashboard_started
+    global dashboard_started, commands_synced
     await init_db()
+
+    if DISCORD_GUILD_ID and not commands_synced:
+        guild = discord.Object(id=int(DISCORD_GUILD_ID))
+        bot.tree.copy_global_to(guild=guild)
+        await bot.tree.sync(guild=guild)
+        commands_synced = True
 
     if not daily_story_task.is_running():
         daily_story_task.start()
@@ -973,6 +982,141 @@ async def generar_dia(ctx):
         await publish_critical_decision(channel, day, clean_text)
         await publish_ability_votes(channel, day, level_ups)
         await publish_quote_of_day(channel, day)
+
+
+@bot.tree.command(name="ping", description="Comprueba la latencia del bot.")
+async def slash_ping(interaction: discord.Interaction):
+    latency = round(bot.latency * 1000)
+    await interaction.response.send_message(f"Pong. Latencia: {latency}ms", ephemeral=True)
+
+
+@bot.tree.command(name="generar_dia", description="Cierra votos abiertos y genera el siguiente dia narrativo.")
+@app_commands.checks.has_permissions(administrator=True)
+async def slash_generar_dia(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    channel = bot.get_channel(CHANNEL_ID)
+    closed_votes = await close_pending_votes_for_manual_generation(channel)
+    if closed_votes:
+        closed_message = "Votos abiertos cerrados antes de generar el dia:\n" + "\n".join(closed_votes)
+        if channel:
+            for part in split_message(closed_message):
+                await channel.send(part)
+
+    clean_text, display_text, title, level_ups = await generate_next_day()
+    await send_long_message(CHANNEL_ID, f"**{title}**\n{display_text}")
+    day = await get_current_day()
+    pdf_path = export_day_to_pdf(day, title, clean_text)
+    try:
+        await interaction.followup.send(
+            content=f"Dia {day} generado y publicado.",
+            file=discord.File(pdf_path)
+        )
+    finally:
+        remove_file_safely(pdf_path)
+
+    if channel:
+        await publish_critical_decision(channel, day, clean_text)
+        await publish_ability_votes(channel, day, level_ups)
+        await publish_quote_of_day(channel, day)
+
+
+@bot.tree.command(name="stats", description="Muestra la ficha completa de un personaje.")
+@app_commands.describe(nombre="Nombre del personaje")
+async def slash_stats(interaction: discord.Interaction, nombre: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    data = await get_character_stats(nombre)
+    if not data:
+        await interaction.followup.send("Personaje no encontrado.", ephemeral=True)
+        return
+
+    c = data["character"]
+    embed = discord.Embed(title=f"Stats de {c['name']}", color=discord.Color.blurple())
+    embed.add_field(name="Base", value=truncate_text(f"Raza: {c['race']}\nEstado: {c['status']}\nNivel: {c['level']}\nEstatus: {c['social_status']}\nUbicacion: {c['current_kingdom'] or 'Desconocida'}"), inline=False)
+    embed.add_field(name="Equipo", value=truncate_text(f"Arma: {c['weapon'] or 'N/A'}\nAmuleto: {c['amulet'] or 'N/A'}\nMascota: {format_json_value(c['pet'])}"), inline=False)
+    embed.add_field(name="Poderes", value=truncate_text(f"Habilidades: {format_json_value(c['abilities'])}\nPasivas: {format_json_value(c['passives'])}\nMovimiento final: {format_json_value(c['final_move'])}"), inline=False)
+    embed.add_field(name="Combates", value=str(data["battle_count"]), inline=True)
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+@bot.tree.command(name="ranking", description="Muestra el ranking de poder actual.")
+async def slash_ranking(interaction: discord.Interaction):
+    await interaction.response.defer(thinking=True)
+    rows = await get_power_ranking()
+    if not rows:
+        await interaction.followup.send("No hay personajes vivos para rankear.")
+        return
+
+    embed = discord.Embed(title="Marcador de poder", color=discord.Color.gold())
+    for index, row in enumerate(rows[:15], start=1):
+        location = row["current_kingdom"] or "ubicacion desconocida"
+        embed.add_field(
+            name=f"{index}. {row['name']} ({row['race']})",
+            value=f"Nivel {row['level']} | Fama {row['total_fame']} | Victorias {row['wins']} | {location}",
+            inline=False
+        )
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(name="votar", description="Crea una votacion manual con opciones separadas por |.")
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.describe(pregunta="Pregunta de la votacion", opciones="Opciones separadas por |")
+async def slash_votar(interaction: discord.Interaction, pregunta: str, opciones: str):
+    parts = [part.strip() for part in opciones.split("|") if part.strip()]
+    if len(parts) < 2:
+        await interaction.response.send_message("Necesitas al menos 2 opciones separadas por |.", ephemeral=True)
+        return
+    if len(parts) > 5:
+        await interaction.response.send_message("Maximo 5 opciones por votacion.", ephemeral=True)
+        return
+
+    await interaction.response.defer(thinking=True)
+    day = await get_current_day()
+    emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+    message_text = f"🗳️ **VOTACION ABIERTA (Dia {day})**\n{pregunta}\n"
+    for index, option in enumerate(parts):
+        message_text += f"{emojis[index]} {option}\n"
+
+    poll = await interaction.channel.send(message_text)
+    vote_id = await create_vote(day, pregunta, parts, source="manual")
+    await set_vote_message_id(vote_id, poll.id)
+    for index in range(len(parts)):
+        await poll.add_reaction(emojis[index])
+    await interaction.followup.send(f"Votacion #{vote_id} creada.", ephemeral=True)
+
+
+@bot.tree.command(name="cerrar_votacion", description="Cierra una votacion con un resultado concreto.")
+@app_commands.checks.has_permissions(administrator=True)
+async def slash_cerrar_votacion(interaction: discord.Interaction, vote_id: int, resultado: str):
+    await interaction.response.defer(thinking=True, ephemeral=True)
+    vote = await get_vote(vote_id)
+    if not vote:
+        await interaction.followup.send("No encontre esa votacion.", ephemeral=True)
+        return
+    options = decode_vote_options(vote["options"])
+    if vote["vote_type"] == "ability" and not option_is_valid(resultado, options):
+        await interaction.followup.send("Ese resultado no existe entre las opciones de la votacion de habilidad.", ephemeral=True)
+        return
+
+    await close_vote(vote_id, resultado)
+    ability_message = ""
+    if vote["vote_type"] == "ability" and not is_non_choice_result(resultado):
+        character_name = await apply_unlocked_ability(vote_id, resultado)
+        if character_name:
+            ability_message = f"\n{character_name} desbloqueo: **{resultado}**"
+    await interaction.followup.send(f"Votacion {vote_id} cerrada.\nResultado: {resultado}{ability_message}", ephemeral=True)
+
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    if isinstance(error, app_commands.MissingPermissions):
+        message = "No tienes permisos para usar este comando."
+    else:
+        message = "No pude ejecutar el comando. Revisa logs del bot."
+
+    if interaction.response.is_done():
+        await interaction.followup.send(message, ephemeral=True)
+        return
+    await interaction.response.send_message(message, ephemeral=True)
 
 
 bot.run(TOKEN)

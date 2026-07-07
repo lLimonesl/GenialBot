@@ -4,6 +4,7 @@ from urllib.parse import quote
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from database import (
     get_active_arcs,
@@ -21,6 +22,8 @@ from database import (
     get_npcs,
     get_power_ranking,
     get_quotes,
+    get_recent_ai_runs,
+    get_recent_prompt_snapshots,
     get_recent_trades,
     get_timeline_events,
     get_votes,
@@ -28,6 +31,7 @@ from database import (
 
 
 app = FastAPI(title="GenialBot Dashboard")
+app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
 def value_text(value):
@@ -447,6 +451,7 @@ def page(title, body):
       .avatar {{ width: 62px; height: 62px; border-radius: 20px; }}
     }}
   </style>
+  <link rel="stylesheet" href="/static/dashboard.css">
 </head>
 <body class="selection:bg-sky-300/30 selection:text-white">
   <header>
@@ -459,7 +464,7 @@ def page(title, body):
         </div>
       </div>
       <nav>
-        <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/reinos">Reinos</a><a href="/timeline">Timeline</a><a href="/progresion">Progresión</a><a href="/combates">Combates</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/votaciones">Votaciones</a><a href="/comercio">Comercio</a><a href="/novel">Novel</a>
+        <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/reinos">Reinos</a><a href="/timeline">Timeline</a><a href="/progresion">Progresión</a><a href="/combates">Combates</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/votaciones">Votaciones</a><a href="/comercio">Comercio</a><a href="/memoria-ia">Memoria IA</a><a href="/novel">Novel</a>
       </nav>
     </div>
   </header>
@@ -481,6 +486,32 @@ async def home():
     body += f"<div class='card'><pre>{html.escape(latest['full_text'] or latest['summary'] or '')}</pre></div>"
     body += "</section>"
     return page("GenialBot", body)
+
+
+@app.get("/memoria-ia", response_class=HTMLResponse)
+async def ai_memory_page():
+    runs = await get_recent_ai_runs(limit=30)
+    snapshots = await get_recent_prompt_snapshots(limit=12)
+    body = "<section class='p-5 sm:p-7 ai-memory-hero'>"
+    body += "<p class='eyebrow'>Observatorio del narrador</p><h2>Memoria IA</h2>"
+    body += "<p class='subtitle'>Auditoria de modelos, prompts y ejecuciones recientes para entender que informacion recibe la IA.</p>"
+    body += "<div class='grid ai-memory-grid'>"
+    body += value_card("Modelo principal", runs[0]["model"] if runs else "Sin ejecuciones")
+    body += value_card("Prompts recientes", str(len(snapshots)))
+    body += value_card("Ejecuciones recientes", str(len(runs)))
+    body += "</div>"
+    body += section_heading("Ejecuciones", "Cada llamada queda registrada con proposito, modelo y estimacion de tokens.")
+    if not runs:
+        body += "<div class='card empty'>Todavia no hay ejecuciones registradas.</div>"
+    for run in runs:
+        status = html.escape(run["status"] or "unknown")
+        error = f"<p class='muted'>Error: {html.escape(run['error'])}</p>" if run["error"] else ""
+        body += f"<div class='card compact ai-run'><span class='title'>#{run['id']} · {html.escape(run['purpose'])}</span><div class='meta'><span class='pill'>{html.escape(run['model'])}</span><span class='pill'>{status}</span><span class='pill'>~{run['token_estimate'] or 0} tokens</span></div>{error}</div>"
+    body += section_heading("Prompt snapshots", "No se muestra el prompt completo para evitar una pagina excesiva; se conserva en PostgreSQL.")
+    for snapshot in snapshots:
+        body += f"<div class='card compact prompt-snapshot'><span class='title'>Prompt #{snapshot['id']} · {html.escape(snapshot['purpose'])}</span><div class='meta'><span class='pill'>{html.escape(snapshot['model'])}</span><span class='pill'>~{snapshot['token_estimate']} tokens</span></div></div>"
+    body += "</section>"
+    return page("Memoria IA", body)
 
 
 @app.get("/historia", response_class=HTMLResponse)

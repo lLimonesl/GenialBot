@@ -2,8 +2,9 @@
 import os
 import re
 import json
-from openai import OpenAI
 from dotenv import load_dotenv
+from app.ai.client import get_ai_model, get_fast_ai_model, get_openai_client
+from app.ai.prompt_builder import PromptBlock, render_prompt_blocks
 from database import (
     get_world_state,
     get_full_characters,
@@ -37,11 +38,15 @@ from database import (
     get_all_legends,
     upsert_legends,
     append_world_rule_change,
-    record_character_progression
+    record_character_progression,
+    record_ai_run,
+    record_prompt_snapshot
 )
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+client = get_openai_client()
+STORY_MODEL = get_ai_model()
+FAST_MODEL = get_fast_ai_model()
 
 METADATA_TAGS = (
     "WEATHER",
@@ -136,6 +141,13 @@ def format_character_for_prompt(character):
   Movimiento final:
 {format_prompt_value(character['final_move'], 2)}
 """.strip()
+
+def add_structured_prompt_index(prompt, **sections):
+    blocks = [
+        PromptBlock(str(title).replace("_", " ").title(), str(content or "No registrado."))
+        for title, content in sections.items()
+    ]
+    return render_prompt_blocks(blocks) + "\n\n---\n\n" + prompt
 
 async def generate_next_day():
     current_day, rules = await get_world_state()
@@ -301,9 +313,21 @@ No uses estos tags dentro de la narración normal.
 - [KEY_EVENT] tipo|título|descripción
 - [LEGEND] Nombre|Nivel/poder|Reino o ubicación|Estado|Descripción
 """
+    prompt = add_structured_prompt_index(
+        prompt,
+        modelo=STORY_MODEL,
+        reglas=rules,
+        memoria=narrative_context,
+        personajes=char_text,
+        inventario=inventory_text,
+        eventos_activos=key_event_text,
+        decisiones=vote_text,
+        leyendas=legend_text,
+    )
+    prompt_snapshot_id = await record_prompt_snapshot("generate_next_day", STORY_MODEL, prompt)
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=STORY_MODEL,
         messages=[
             {
                 "role": "system",
@@ -315,6 +339,7 @@ No uses estos tags dentro de la narración normal.
     )
 
     text = strip_prompt_leaks(response.choices[0].message.content)
+    await record_ai_run("generate_next_day", STORY_MODEL, prompt_snapshot_id, text)
     text = await validate_and_repair_consistency(text, rules, char_text, key_event_text, legend_text)
     metadata = extract_metadata(text)
     metadata["quotes"] = filter_memorable_quotes(metadata["quotes"], recent_quotes)
@@ -488,7 +513,7 @@ async def compress_month(day: int):
 
 async def summarize_memory(content: str, instruction: str):
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=FAST_MODEL,
         messages=[{"role": "user", "content": f"{instruction}\n\nCONTENIDO:\n{content}"}],
         temperature=0.2
     )
@@ -520,7 +545,7 @@ Tarea:
 - No agregues explicaciones.
 """
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=FAST_MODEL,
         messages=[
             {"role": "system", "content": "Eres un verificador de continuidad. Responde OK o una narración corregida."},
             {"role": "user", "content": prompt}
@@ -559,7 +584,7 @@ Formatos exactos:
 [LEVEL_UP] Personaje +1 niveles
 """
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=FAST_MODEL,
         messages=[
             {"role": "system", "content": "Responde solo con líneas de metadatos válidas o NO."},
             {"role": "user", "content": prompt}
@@ -604,7 +629,7 @@ Responde solo en JSON con este formato exacto:
 {{"abilities": [{{"name": "Nombre", "description": "Descripción breve"}}, {{"name": "Nombre", "description": "Descripción breve"}}, {{"name": "Nombre", "description": "Descripción breve"}}]}}
 """
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=FAST_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.4
     )
@@ -665,7 +690,7 @@ Las opciones deben ser concretas, urgentes y relacionadas con salvar, sacrificar
 """
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=FAST_MODEL,
         messages=[
             {"role": "system", "content": "Responde solo con JSON válido o NO."},
             {"role": "user", "content": prompt}
@@ -708,7 +733,7 @@ Reglas:
 - Máximo 2 frases.
 """
     response = client.chat.completions.create(
-        model="gpt-4o-mini",
+        model=FAST_MODEL,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.35
     )

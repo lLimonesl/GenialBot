@@ -225,6 +225,84 @@ async def init_db():
         );
         """)
 
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS prompt_snapshots (
+            id SERIAL PRIMARY KEY,
+            purpose TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt_text TEXT NOT NULL,
+            token_estimate INTEGER NOT NULL DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        """)
+
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS ai_runs (
+            id SERIAL PRIMARY KEY,
+            purpose TEXT NOT NULL,
+            model TEXT NOT NULL,
+            prompt_snapshot_id INTEGER REFERENCES prompt_snapshots(id) ON DELETE SET NULL,
+            output_text TEXT,
+            status TEXT NOT NULL DEFAULT 'success',
+            error TEXT,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        """)
+
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS story_facts (
+            id SERIAL PRIMARY KEY,
+            day INTEGER,
+            entity_type TEXT NOT NULL,
+            entity_name TEXT NOT NULL,
+            fact_type TEXT NOT NULL,
+            fact_text TEXT NOT NULL,
+            source_table TEXT,
+            source_id INTEGER,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        """)
+
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS entity_relationships (
+            id SERIAL PRIMARY KEY,
+            left_entity_type TEXT NOT NULL,
+            left_entity_name TEXT NOT NULL,
+            relationship_type TEXT NOT NULL,
+            right_entity_type TEXT NOT NULL,
+            right_entity_name TEXT NOT NULL,
+            description TEXT,
+            is_active BOOLEAN NOT NULL DEFAULT TRUE,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        """)
+
+        await conn.execute("""
+        CREATE TABLE IF NOT EXISTS memory_chunks (
+            id SERIAL PRIMARY KEY,
+            day_start INTEGER,
+            day_end INTEGER,
+            chunk_type TEXT NOT NULL,
+            title TEXT,
+            content TEXT NOT NULL,
+            importance INTEGER NOT NULL DEFAULT 1,
+            token_count INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT NOW()
+        );
+        """)
+
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_logs_day ON daily_logs(day)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_votes_status ON votes(status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_key_events_active_day ON key_events(is_active, day DESC)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_characters_status ON characters(status)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_narrative_memory_type_day ON narrative_memory(summary_type, day DESC)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_prompt_snapshots_created_at ON prompt_snapshots(created_at DESC)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_runs_created_at ON ai_runs(created_at DESC)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_story_facts_entity ON story_facts(entity_type, entity_name, is_active)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_relationships_left ON entity_relationships(left_entity_type, left_entity_name, is_active)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_memory_chunks_type_days ON memory_chunks(chunk_type, day_start, day_end)")
+
         # Inicializar world
         await conn.execute("""
             INSERT INTO world (id, current_day, rules, hierarchy, meta)
@@ -299,6 +377,46 @@ async def record_narrative_memory(day: int, summary_type: str, content: str):
             INSERT INTO narrative_memory (day, summary_type, content, token_count)
             VALUES ($1, $2, $3, $4)
         """, day, summary_type, content, token_count)
+
+async def record_prompt_snapshot(purpose: str, model: str, prompt_text: str):
+    token_estimate = max(1, len(prompt_text or "") // 4)
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval("""
+            INSERT INTO prompt_snapshots (purpose, model, prompt_text, token_estimate)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id
+        """, purpose, model, prompt_text, token_estimate)
+
+async def record_ai_run(purpose: str, model: str, prompt_snapshot_id=None, output_text=None, status="success", error=None):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetchval("""
+            INSERT INTO ai_runs (purpose, model, prompt_snapshot_id, output_text, status, error)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            RETURNING id
+        """, purpose, model, prompt_snapshot_id, output_text, status, error)
+
+async def get_recent_ai_runs(limit=20):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT r.id, r.purpose, r.model, r.status, r.error, r.created_at, p.token_estimate
+            FROM ai_runs r
+            LEFT JOIN prompt_snapshots p ON p.id = r.prompt_snapshot_id
+            ORDER BY r.id DESC
+            LIMIT $1
+        """, limit)
+
+async def get_recent_prompt_snapshots(limit=10):
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        return await conn.fetch("""
+            SELECT id, purpose, model, token_estimate, created_at
+            FROM prompt_snapshots
+            ORDER BY id DESC
+            LIMIT $1
+        """, limit)
 
 async def get_narrative_memory():
     pool = await get_pool()

@@ -1,0 +1,10 @@
+{
+  "version": 2,
+  "name": "discord",
+  "owner": "openclaw",
+  "repo": "openclaw",
+  "path": "extensions/discord/skills/discord",
+  "branch": "main",
+  "sha": "671d1146f020c4db5f2a1ed32c118f550394c38f",
+  "source": "manual"
+}
