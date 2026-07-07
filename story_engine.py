@@ -87,6 +87,23 @@ PROMPT_LEAK_HEADINGS = (
     "FORMATO DE METADATOS:",
 )
 
+PROMPT_KEY_LABELS = {
+    "name": "Nombre o tipo",
+    "description": "Descripcion",
+    "limits": "Limites",
+    "cost": "Coste",
+    "cooldown": "Enfriamiento o duracion",
+    "requirement": "Requisito",
+    "notes": "Notas",
+    "sex": "Genero",
+    "gender": "Genero",
+    "variant": "Variante",
+    "revives": "Revive",
+    "revive_days": "Dias para revivir",
+    "habilidad": "Habilidad",
+    "inmortal": "Inmortal",
+}
+
 def parse_json_field(value):
     if value is None:
         return None
@@ -97,28 +114,43 @@ def parse_json_field(value):
             return value
     return value
 
+def format_prompt_key(key):
+    return PROMPT_KEY_LABELS.get(str(key), str(key).replace("_", " ").title())
+
+def format_named_dict_for_prompt(value):
+    if {"name", "description"}.issubset(value.keys()):
+        parts = [f"{value['name']}: {value['description']}"]
+    elif "name" in value:
+        parts = [f"Mascota/companero: {value['name']}"]
+    else:
+        parts = []
+
+    for key, item in value.items():
+        if key in {"name", "description"}:
+            continue
+        if item in (None, "", [], {}):
+            continue
+        if key == "limits" and item == "Sin limite adicional definido.":
+            continue
+        if key == "cost" and item == "Sin coste adicional definido.":
+            continue
+        if key == "cooldown" and item == "Sin enfriamiento definido.":
+            continue
+        parts.append(f"{format_prompt_key(key)}: {format_prompt_value(item)}")
+
+    return " | ".join(parts) if parts else "No definido."
+
 def format_prompt_value(value, indent=0):
     value = parse_json_field(value)
     prefix = "  " * indent
     if value is None or value == {} or value == []:
         return "No definido."
     if isinstance(value, dict):
-        if {"name", "description"}.issubset(value.keys()):
-            parts = [f"{value['name']}: {value['description']}"]
-            if value.get("limits") and value["limits"] != "Sin limite adicional definido.":
-                parts.append(f"Limites: {value['limits']}")
-            if value.get("cost") and value["cost"] != "Sin coste adicional definido.":
-                parts.append(f"Coste: {value['cost']}")
-            if value.get("cooldown") and value["cooldown"] != "Sin enfriamiento definido.":
-                parts.append(f"Enfriamiento/duracion: {value['cooldown']}")
-            if value.get("requirement"):
-                parts.append(f"Requisito: {value['requirement']}")
-            if value.get("notes"):
-                parts.append(f"Notas: {value['notes']}")
-            return " | ".join(parts)
+        if "name" in value:
+            return format_named_dict_for_prompt(value)
         lines = []
         for key, item in value.items():
-            lines.append(f"{prefix}- {str(key).replace('_', ' ').title()}: {format_prompt_value(item, indent + 1)}")
+            lines.append(f"{prefix}- {format_prompt_key(key)}: {format_prompt_value(item, indent + 1)}")
         return "\n".join(lines)
     if isinstance(value, list):
         return "\n".join(f"{prefix}- {format_prompt_value(item, indent + 1)}" for item in value)
@@ -149,6 +181,49 @@ def add_structured_prompt_index(prompt, **sections):
     ]
     return render_prompt_blocks(blocks) + "\n\n---\n\n" + prompt
 
+def character_appears_in_text(character_name, text):
+    return character_name.lower() in (text or "").lower()
+
+def build_character_rotation_context(recent_days, characters):
+    names = [character["name"] for character in characters]
+    ordered_days = sorted(recent_days, key=lambda day: day["day"], reverse=True)
+    recent_presence = {name: 0 for name in names}
+    consecutive_presence = {name: 0 for name in names}
+
+    for day in ordered_days:
+        text = f"{day['title'] or ''}\n{day['summary'] or ''}\n{day['full_text'] or ''}"
+        for name in names:
+            if character_appears_in_text(name, text):
+                recent_presence[name] += 1
+
+    for name in names:
+        for day in ordered_days[:2]:
+            text = f"{day['title'] or ''}\n{day['summary'] or ''}\n{day['full_text'] or ''}"
+            if character_appears_in_text(name, text):
+                consecutive_presence[name] += 1
+                continue
+            break
+
+    blocked = [name for name, count in consecutive_presence.items() if count >= 2]
+    priority = [name for name, count in sorted(recent_presence.items(), key=lambda item: (item[1], item[0])) if name not in blocked]
+    absent = [name for name in priority if recent_presence[name] == 0]
+
+    blocked_text = ", ".join(blocked) if blocked else "Ninguno."
+    absent_text = ", ".join(absent[:8]) if absent else "Ninguno sin aparicion reciente."
+    priority_text = ", ".join(priority[:10]) if priority else "Usar reparto coral sin repetir foco."
+
+    return f"""
+REGLA DURA DE ROTACION:
+- Ningun personaje puede ser foco principal mas de 2 dias seguidos.
+- Si un personaje aparece en los ultimos 2 dias seguidos, NO debe protagonizar el siguiente dia. Puede tener solo cameo breve si una consecuencia lo exige.
+- El siguiente dia debe usar como foco 3 a 5 personajes de PRIORIDAD, especialmente ausentes.
+- Si un personaje bloqueado aparece, debe compartir escena con personajes ausentes y no resolver el conflicto principal.
+
+Personajes bloqueados como foco por aparicion consecutiva: {blocked_text}
+Personajes ausentes o muy poco usados a priorizar: {absent_text}
+Orden sugerido de prioridad narrativa: {priority_text}
+""".strip()
+
 async def generate_next_day():
     current_day, rules = await get_world_state()
     characters = await get_full_characters()
@@ -164,6 +239,7 @@ async def generate_next_day():
     legends = await get_all_legends(active_only=True)
     recent_days = await get_recent_full_days(limit=5)
     recent_focus = extract_recent_character_focus(recent_days, characters)
+    rotation_context = build_character_rotation_context(recent_days, characters)
     recent_quotes = await get_quotes(limit=12)
     recent_quote_text = "\n".join(
         f"- Día {q['day']} | {q['character_name']}: \"{q['quote']}\""
@@ -268,6 +344,9 @@ DECISIONES DEL PUBLICO:
 FOCO NARRATIVO RECIENTE:
 {recent_focus or 'Sin foco reciente detectado.'}
 
+CONTROL DE ROTACION DE PERSONAJES:
+{rotation_context}
+
 CITAS RECIENTES A EVITAR:
 {recent_quote_text}
 
@@ -277,7 +356,7 @@ Escribe el Día {current_day + 1}.
 No repitas eventos.
 Las consecuencias son permanentes.
 Reparte el protagonismo entre 3 a 5 personajes vivos.
-Evita centrar el día en personajes que ya dominaron el foco reciente, salvo que sea inevitable por una consecuencia directa.
+Evita centrar el día en personajes que ya dominaron el foco reciente. Si estan bloqueados por CONTROL DE ROTACION, no pueden ser foco principal.
 Incluye al menos una escena breve de otro grupo o personaje secundario para mantener el mundo vivo.
 Las citas memorables deben variar de personaje; evita asignarlas al mismo personaje dominante del foco reciente si otro personaje tuvo una escena fuerte.
 No generes citas parecidas a CITAS RECIENTES A EVITAR.
@@ -323,6 +402,7 @@ No uses estos tags dentro de la narración normal.
         eventos_activos=key_event_text,
         decisiones=vote_text,
         leyendas=legend_text,
+        rotacion_de_personajes=rotation_context,
     )
     prompt_snapshot_id = await record_prompt_snapshot("generate_next_day", STORY_MODEL, prompt)
 

@@ -22,8 +22,6 @@ from database import (
     get_npcs,
     get_power_ranking,
     get_quotes,
-    get_recent_ai_runs,
-    get_recent_prompt_snapshots,
     get_recent_trades,
     get_timeline_events,
     get_votes,
@@ -32,6 +30,24 @@ from database import (
 
 app = FastAPI(title="GenialBot Dashboard")
 app.mount("/static", StaticFiles(directory="static"), name="static")
+
+
+DISPLAY_KEY_LABELS = {
+    "name": "Nombre o tipo",
+    "description": "Descripcion",
+    "limits": "Limites",
+    "cost": "Coste",
+    "cooldown": "Enfriamiento o duracion",
+    "requirement": "Requisito",
+    "notes": "Notas",
+    "sex": "Genero",
+    "gender": "Genero",
+    "variant": "Variante",
+    "revives": "Revive",
+    "revive_days": "Dias para revivir",
+    "habilidad": "Habilidad",
+    "inmortal": "Inmortal",
+}
 
 
 def value_text(value):
@@ -49,7 +65,22 @@ def value_text(value):
         if not value:
             return "N/A"
         if set(value.keys()) == {"name"}:
-            return value_text(value["name"])
+            return f"Mascota/companero: {value_text(value['name'])}"
+        if "name" in value:
+            parts = [f"Mascota/companero: {value_text(value['name'])}"]
+            if "description" in value:
+                parts = [f"{value_text(value['name'])}: {value_text(value['description'])}"]
+            for key, item in value.items():
+                if key in {"name", "description"} or item in (None, "", [], {}):
+                    continue
+                if key == "limits" and item == "Sin limite adicional definido.":
+                    continue
+                if key == "cost" and item == "Sin coste adicional definido.":
+                    continue
+                if key == "cooldown" and item == "Sin enfriamiento definido.":
+                    continue
+                parts.append(f"{humanize_key(key)}: {value_text(item)}")
+            return ", ".join(parts)
         return ", ".join(
             f"{humanize_key(key)}: {value_text(item)}"
             for key, item in value.items()
@@ -62,7 +93,13 @@ def value_text(value):
 
 
 def humanize_key(key):
-    return str(key).replace("_", " ").title()
+    return DISPLAY_KEY_LABELS.get(str(key), str(key).replace("_", " ").title())
+
+
+def progress_width(value, reference, minimum=4):
+    if reference <= 0:
+        return minimum
+    return max(minimum, min(100, int((abs(value or 0) / reference) * 100)))
 
 
 def value_card(title, value):
@@ -120,7 +157,7 @@ def page(title, body):
     body {{
       margin: 0;
       min-height: 100vh;
-      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-family: "Plus Jakarta Sans", "Geist", ui-sans-serif, system-ui, sans-serif;
       background:
         radial-gradient(circle at top left, rgba(125, 211, 252, 0.2), transparent 34rem),
         radial-gradient(circle at top right, rgba(192, 132, 252, 0.2), transparent 30rem),
@@ -135,7 +172,7 @@ def page(title, body):
       background-image: linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
       background-size: 44px 44px;
       mask-image: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent 75%);
-      animation: grid-drift 26s linear infinite;
+      animation: grid-drift 26s cubic-bezier(0.32, 0.72, 0, 1) infinite;
     }}
     body::after {{
       content: "";
@@ -147,7 +184,7 @@ def page(title, body):
       pointer-events: none;
       background: radial-gradient(circle, rgba(125, 211, 252, 0.12), transparent 64%);
       filter: blur(6px);
-      animation: orb-float 9s ease-in-out infinite alternate;
+      animation: orb-float 9s cubic-bezier(0.32, 0.72, 0, 1) infinite alternate;
     }}
     header {{
       position: sticky;
@@ -464,7 +501,7 @@ def page(title, body):
         </div>
       </div>
       <nav>
-        <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/reinos">Reinos</a><a href="/timeline">Timeline</a><a href="/progresion">Progresión</a><a href="/combates">Combates</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/votaciones">Votaciones</a><a href="/comercio">Comercio</a><a href="/memoria-ia">Memoria IA</a><a href="/novel">Novel</a>
+        <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/reinos">Reinos</a><a href="/timeline">Timeline</a><a href="/progresion">Progresión</a><a href="/combates">Combates</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/votaciones">Votaciones</a><a href="/comercio">Comercio</a><a href="/novel">Novel</a>
       </nav>
     </div>
   </header>
@@ -486,32 +523,6 @@ async def home():
     body += f"<div class='card'><pre>{html.escape(latest['full_text'] or latest['summary'] or '')}</pre></div>"
     body += "</section>"
     return page("GenialBot", body)
-
-
-@app.get("/memoria-ia", response_class=HTMLResponse)
-async def ai_memory_page():
-    runs = await get_recent_ai_runs(limit=30)
-    snapshots = await get_recent_prompt_snapshots(limit=12)
-    body = "<section class='p-5 sm:p-7 ai-memory-hero'>"
-    body += "<p class='eyebrow'>Observatorio del narrador</p><h2>Memoria IA</h2>"
-    body += "<p class='subtitle'>Auditoria de modelos, prompts y ejecuciones recientes para entender que informacion recibe la IA.</p>"
-    body += "<div class='grid ai-memory-grid'>"
-    body += value_card("Modelo principal", runs[0]["model"] if runs else "Sin ejecuciones")
-    body += value_card("Prompts recientes", str(len(snapshots)))
-    body += value_card("Ejecuciones recientes", str(len(runs)))
-    body += "</div>"
-    body += section_heading("Ejecuciones", "Cada llamada queda registrada con proposito, modelo y estimacion de tokens.")
-    if not runs:
-        body += "<div class='card empty'>Todavia no hay ejecuciones registradas.</div>"
-    for run in runs:
-        status = html.escape(run["status"] or "unknown")
-        error = f"<p class='muted'>Error: {html.escape(run['error'])}</p>" if run["error"] else ""
-        body += f"<div class='card compact ai-run'><span class='title'>#{run['id']} · {html.escape(run['purpose'])}</span><div class='meta'><span class='pill'>{html.escape(run['model'])}</span><span class='pill'>{status}</span><span class='pill'>~{run['token_estimate'] or 0} tokens</span></div>{error}</div>"
-    body += section_heading("Prompt snapshots", "No se muestra el prompt completo para evitar una pagina excesiva; se conserva en PostgreSQL.")
-    for snapshot in snapshots:
-        body += f"<div class='card compact prompt-snapshot'><span class='title'>Prompt #{snapshot['id']} · {html.escape(snapshot['purpose'])}</span><div class='meta'><span class='pill'>{html.escape(snapshot['model'])}</span><span class='pill'>~{snapshot['token_estimate']} tokens</span></div></div>"
-    body += "</section>"
-    return page("Memoria IA", body)
 
 
 @app.get("/historia", response_class=HTMLResponse)
@@ -681,14 +692,16 @@ async def progression_page():
         max_level = max(max_level, row["level"])
         max_fame_abs = max(max_fame_abs, abs(row["total_fame"] or 0))
         max_day = max(max_day, row["day"])
+    level_reference = max(100, ((max_level + 9) // 10) * 10)
+    fame_reference = max(50, ((max_fame_abs + 9) // 10) * 10)
     body = "<section class='p-5 sm:p-7'><p class='mb-2 text-sm font-bold uppercase tracking-[0.25em] text-emerald-300/80'>Crecimiento</p><h2>Progresión de personajes</h2>"
     if not grouped:
         body += "<div class='card empty'>La progresión empezará a registrarse desde el próximo día generado.</div></section>"
         return page("Progresión", body)
     body += "<div class='progress-overview'>"
     body += info_card("Personajes con progreso", str(len(grouped)), accent=True)
-    body += info_card("Nivel máximo actual", str(max_level))
-    body += info_card("Fama de referencia", f"±{max_fame_abs}")
+    body += info_card("Escala de nivel", f"0-{level_reference}")
+    body += info_card("Escala de fama", f"±{fame_reference}")
     body += info_card("Último día registrado", f"Día {max_day}")
     body += "</div>"
 
@@ -703,27 +716,29 @@ async def progression_page():
         first_recent = recent_points[0]
         level_delta = latest["level"] - first_recent["level"]
         fame_delta = (latest["total_fame"] or 0) - (first_recent["total_fame"] or 0)
-        level_width = max(4, min(100, int((latest["level"] / max_level) * 100)))
-        fame_width = max(4, min(100, int((abs(latest["total_fame"] or 0) / max_fame_abs) * 100)))
+        level_width = progress_width(latest["level"], level_reference)
+        fame_width = progress_width(latest["total_fame"], fame_reference)
+        fame_tone = "negative" if (latest["total_fame"] or 0) < 0 else "positive"
         body += "<div class='card progress-card'>"
         body += "<div class='progress-head'>"
-        body += f"<div><span class='title'>{html.escape(name)}</span><p class='muted'>Último registro: día {latest['day']}. Comparado contra el máximo global actual.</p></div>"
+        body += f"<div><span class='title'>{html.escape(name)}</span><p class='muted'>Último registro: día {latest['day']}. Barras medidas contra una escala estable, no contra otros personajes.</p></div>"
         body += f"<span class='delta'>Nivel {level_delta:+d} · Fama {fame_delta:+d}</span>"
         body += "</div>"
-        body += f"<div class='progress-row'><div class='progress-label'><span>Nivel actual</span><small>{latest['level']} / {max_level}</small></div><div class='meter' title='Nivel {latest['level']} de {max_level}'><div class='meter-fill level' style='width:{level_width}%'></div></div></div>"
-        body += f"<div class='progress-row'><div class='progress-label'><span>Fama acumulada</span><small>{latest['total_fame']} / ±{max_fame_abs}</small></div><div class='meter' title='Fama {latest['total_fame']} contra referencia ±{max_fame_abs}'><div class='meter-fill fame' style='width:{fame_width}%'></div></div></div>"
+        body += f"<div class='progress-row'><div class='progress-label'><span>Nivel actual</span><small>{latest['level']} / {level_reference}</small></div><div class='meter' title='Nivel {latest['level']} de {level_reference}'><div class='meter-fill level' style='width:{level_width}%'></div></div></div>"
+        body += f"<div class='progress-row'><div class='progress-label'><span>Fama acumulada</span><small>{latest['total_fame']} / ±{fame_reference}</small></div><div class='meter' title='Fama {latest['total_fame']} contra referencia ±{fame_reference}'><div class='meter-fill fame {fame_tone}' style='width:{fame_width}%'></div></div></div>"
         body += "<div class='sparkline' aria-label='Tendencia de nivel de los últimos registros'>"
         for point in recent_points:
-            spark_height = max(8, min(100, int((point["level"] / max_level) * 100)))
+            spark_height = progress_width(point["level"], level_reference, minimum=8)
             body += f"<span class='spark' style='height:{spark_height}%' title='Día {point['day']}: nivel {point['level']}, fama {point['total_fame']}'></span>"
         body += "</div>"
         for point in recent_points[-6:]:
-            point_level_width = max(4, min(100, int((point["level"] / max_level) * 100)))
-            point_fame_width = max(4, min(100, int((abs(point["total_fame"] or 0) / max_fame_abs) * 100)))
+            point_level_width = progress_width(point["level"], level_reference)
+            point_fame_width = progress_width(point["total_fame"], fame_reference)
+            point_fame_tone = "negative" if (point["total_fame"] or 0) < 0 else "positive"
             body += "<div class='progress-point'>"
             body += f"<div class='meta'><span class='pill'>Día {point['day']}</span><span class='pill'>Nivel {point['level']}</span><span class='pill'>Fama {point['total_fame']}</span></div>"
-            body += f"<div class='progress-row'><div class='progress-label'><span>Nivel</span><small>{point_level_width}% del máximo actual</small></div><div class='meter'><div class='meter-fill level' style='width:{point_level_width}%'></div></div></div>"
-            body += f"<div class='progress-row'><div class='progress-label'><span>Fama</span><small>{point_fame_width}% de referencia</small></div><div class='meter'><div class='meter-fill fame' style='width:{point_fame_width}%'></div></div></div>"
+            body += f"<div class='progress-row'><div class='progress-label'><span>Nivel</span><small>{point['level']} / {level_reference}</small></div><div class='meter'><div class='meter-fill level' style='width:{point_level_width}%'></div></div></div>"
+            body += f"<div class='progress-row'><div class='progress-label'><span>Fama</span><small>{point['total_fame']} / ±{fame_reference}</small></div><div class='meter'><div class='meter-fill fame {point_fame_tone}' style='width:{point_fame_width}%'></div></div></div>"
             body += "</div>"
         body += "</div>"
     body += "</section>"
