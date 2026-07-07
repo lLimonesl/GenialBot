@@ -136,376 +136,49 @@ def page(title, body):
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{html.escape(title)}</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <style>
-    :root {{
-      color-scheme: dark;
-      --bg: #090b13;
-      --panel: rgba(18, 24, 39, 0.82);
-      --panel-strong: rgba(27, 36, 58, 0.9);
-      --border: rgba(148, 163, 184, 0.18);
-      --text: #f8fafc;
-      --muted: #a8b3c7;
-      --accent: #7dd3fc;
-      --accent-strong: #c084fc;
-      --gold: #facc15;
-      --emerald: #34d399;
-      --danger: #fb7185;
-      --shadow: 0 24px 80px rgba(0, 0, 0, 0.36);
-    }}
-    * {{ box-sizing: border-box; }}
-    body {{
-      margin: 0;
-      min-height: 100vh;
-      font-family: "Plus Jakarta Sans", "Geist", ui-sans-serif, system-ui, sans-serif;
-      background:
-        radial-gradient(circle at top left, rgba(125, 211, 252, 0.2), transparent 34rem),
-        radial-gradient(circle at top right, rgba(192, 132, 252, 0.2), transparent 30rem),
-        linear-gradient(135deg, #090b13 0%, #111827 48%, #050816 100%);
-      color: var(--text);
-    }}
-    body::before {{
-      content: "";
-      position: fixed;
-      inset: 0;
-      pointer-events: none;
-      background-image: linear-gradient(rgba(255,255,255,0.035) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.035) 1px, transparent 1px);
-      background-size: 44px 44px;
-      mask-image: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent 75%);
-      animation: grid-drift 26s cubic-bezier(0.32, 0.72, 0, 1) infinite;
-    }}
-    body::after {{
-      content: "";
-      position: fixed;
-      inset: auto 8% 5% auto;
-      width: 280px;
-      height: 280px;
-      border-radius: 999px;
-      pointer-events: none;
-      background: radial-gradient(circle, rgba(125, 211, 252, 0.12), transparent 64%);
-      filter: blur(6px);
-      animation: orb-float 9s cubic-bezier(0.32, 0.72, 0, 1) infinite alternate;
-    }}
-    header {{
-      position: sticky;
-      top: 0;
-      z-index: 10;
-      border-bottom: 1px solid var(--border);
-      background: rgba(9, 11, 19, 0.72);
-      backdrop-filter: blur(22px);
-    }}
-    .hero {{ max-width: 1180px; margin: 0 auto; padding: 28px 24px 20px; }}
-    .brand {{ display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }}
-    .mark {{
-      display: grid;
-      width: 46px;
-      height: 46px;
-      place-items: center;
-      border: 1px solid rgba(250, 204, 21, 0.35);
-      border-radius: 16px;
-      background: linear-gradient(135deg, rgba(250, 204, 21, 0.18), rgba(125, 211, 252, 0.16));
-      box-shadow: 0 0 30px rgba(250, 204, 21, 0.12);
-      font-size: 24px;
-      animation: sigil-pulse 4.8s ease-in-out infinite;
-    }}
-    h1, h2, h3, p {{ margin-top: 0; }}
-    h1 {{ margin-bottom: 2px; font-size: clamp(1.7rem, 4vw, 2.8rem); letter-spacing: -0.04em; }}
-    h2 {{ margin-bottom: 12px; font-size: clamp(1.55rem, 3vw, 2.35rem); letter-spacing: -0.035em; }}
-    h3 {{ margin-bottom: 8px; color: #e2e8f0; }}
-    .subtitle {{ margin: 0; color: var(--muted); }}
-    main {{ max-width: 1180px; margin: 0 auto; padding: 34px 24px 64px; }}
-    a {{ color: var(--accent); text-decoration: none; }}
-    a:hover {{ color: #bae6fd; }}
-    nav {{ display: flex; flex-wrap: wrap; gap: 10px; }}
-    nav a {{
-      display: inline-flex;
-      align-items: center;
-      min-height: 36px;
-      padding: 8px 13px;
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      background: linear-gradient(135deg, rgba(15, 23, 42, 0.78), rgba(30, 41, 59, 0.54));
-      color: #dbeafe;
-      font-size: 0.92rem;
-      box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
-      transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, box-shadow 140ms ease;
-    }}
-    nav a:hover {{
-      transform: translateY(-1px);
-      border-color: rgba(125, 211, 252, 0.5);
-      background: rgba(14, 165, 233, 0.14);
-      box-shadow: 0 10px 28px rgba(14, 165, 233, 0.12);
-    }}
-    .card {{
-      position: relative;
-      overflow: hidden;
-      background: linear-gradient(145deg, rgba(18, 24, 39, 0.9), rgba(15, 23, 42, 0.64));
-      border: 1px solid var(--border);
-      padding: 22px;
-      margin: 16px 0;
-      border-radius: 26px;
-      box-shadow: var(--shadow);
-      animation: card-rise 420ms ease both;
-    }}
-    .card.compact {{ padding: 18px 20px; }}
-    .card::after {{
-      content: "";
-      position: absolute;
-      inset: 0;
-      pointer-events: none;
-      background: linear-gradient(120deg, rgba(255,255,255,0.09), transparent 30%);
-      opacity: 0.42;
-    }}
-    .card > * {{ position: relative; z-index: 1; }}
-    .card-link {{
-      display: block;
-      color: inherit;
-      cursor: pointer;
-      transition: transform 160ms ease, border-color 160ms ease, background 160ms ease;
-    }}
-    .card-link:hover {{
-      transform: translateY(-3px);
-      border-color: rgba(125, 211, 252, 0.52);
-      background: linear-gradient(145deg, rgba(30, 41, 59, 0.94), rgba(14, 116, 144, 0.16));
-    }}
-    .card-link .title {{ color: #ffffff; }}
-    .grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 18px; margin-top: 18px; }}
-    .grid .card {{ margin: 0; }}
-    .title {{ display: block; margin-bottom: 7px; font-size: 1.06rem; font-weight: 800; letter-spacing: -0.01em; }}
-    .label {{
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      margin-bottom: 10px;
-      color: #93c5fd;
-      font-size: 0.78rem;
-      font-weight: 800;
-      letter-spacing: 0.12em;
-      text-transform: uppercase;
-    }}
-    .label::before {{
-      content: "";
-      width: 7px;
-      height: 7px;
-      border-radius: 999px;
-      background: linear-gradient(135deg, var(--accent), var(--accent-strong));
-      box-shadow: 0 0 18px rgba(125, 211, 252, 0.45);
-    }}
-    .meta {{ display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }}
-    .pill {{
-      display: inline-flex;
-      align-items: center;
-      min-height: 27px;
-      padding: 4px 9px;
-      border: 1px solid rgba(148, 163, 184, 0.18);
-      border-radius: 999px;
-      background: linear-gradient(135deg, rgba(15, 23, 42, 0.74), rgba(30, 41, 59, 0.48));
-      color: #cbd5e1;
-      font-size: 0.84rem;
-    }}
-    .empty {{
-      border: 1px dashed rgba(148, 163, 184, 0.28);
-      background: rgba(15, 23, 42, 0.46);
-      color: var(--muted);
-      text-align: center;
-    }}
-    .quote {{ font-size: 1.04rem; line-height: 1.62; color: #eef6ff; }}
-    .profile-hero {{
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: 18px;
-      align-items: center;
-      margin-bottom: 22px;
-      padding: 24px;
-      border: 1px solid rgba(125, 211, 252, 0.2);
-      border-radius: 30px;
-      background: linear-gradient(135deg, rgba(14, 165, 233, 0.16), rgba(168, 85, 247, 0.12)), rgba(15, 23, 42, 0.72);
-      box-shadow: var(--shadow);
-    }}
-    .avatar {{
-      display: grid;
-      width: 74px;
-      height: 74px;
-      place-items: center;
-      border-radius: 24px;
-      border: 1px solid rgba(250, 204, 21, 0.35);
-      background: radial-gradient(circle at 30% 20%, rgba(250, 204, 21, 0.34), transparent 34px), rgba(15, 23, 42, 0.78);
-      color: #fff7ed;
-      font-size: 2rem;
-      font-weight: 900;
-      box-shadow: 0 0 42px rgba(250, 204, 21, 0.12);
-    }}
-    .profile-hero h2 {{ margin-bottom: 6px; }}
-    .section-heading {{ margin: 30px 0 14px; }}
-    .section-heading h3 {{
-      display: inline-flex;
-      align-items: center;
-      gap: 10px;
-      margin-bottom: 5px;
-      font-size: 1.12rem;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-      color: #e0f2fe;
-    }}
-    .section-heading h3::before {{
-      content: "";
-      width: 28px;
-      height: 2px;
-      border-radius: 999px;
-      background: linear-gradient(90deg, var(--accent), var(--accent-strong));
-    }}
-    .section-heading p {{ margin: 0; color: var(--muted); }}
-    .stat-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; }}
-    .info-card {{
-      padding: 16px;
-      border: 1px solid var(--border);
-      border-radius: 20px;
-      background: linear-gradient(145deg, rgba(15, 23, 42, 0.78), rgba(30, 41, 59, 0.36));
-      box-shadow: 0 18px 45px rgba(0,0,0,0.18);
-    }}
-    .info-card span {{
-      display: block;
-      margin-bottom: 7px;
-      color: var(--muted);
-      font-size: 0.78rem;
-      font-weight: 800;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
-    }}
-    .info-card strong {{ display: block; font-size: 1.02rem; line-height: 1.35; }}
-    .info-card.accent {{ border-color: rgba(125, 211, 252, 0.35); background: rgba(14, 165, 233, 0.1); }}
-    .trait-card {{ transition: transform 160ms ease, border-color 160ms ease; }}
-    .trait-card:hover {{ transform: translateY(-2px); border-color: rgba(125, 211, 252, 0.38); }}
-    .trait-card p {{ margin-bottom: 0; color: #e5edf8; line-height: 1.55; }}
-    .progress-overview {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 14px;
-      margin: 18px 0 24px;
-    }}
-    .progress-card {{
-      border-color: rgba(52, 211, 153, 0.24);
-      background:
-        radial-gradient(circle at 18% 0%, rgba(52, 211, 153, 0.14), transparent 32%),
-        linear-gradient(145deg, rgba(18, 24, 39, 0.92), rgba(15, 23, 42, 0.72));
-    }}
-    .progress-head {{ display: flex; justify-content: space-between; gap: 18px; align-items: flex-start; margin-bottom: 16px; }}
-    .progress-head .title {{ margin-bottom: 3px; }}
-    .delta {{
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      padding: 6px 10px;
-      border-radius: 999px;
-      border: 1px solid rgba(52, 211, 153, 0.28);
-      background: rgba(6, 78, 59, 0.28);
-      color: #bbf7d0;
-      font-weight: 800;
-      font-size: 0.82rem;
-      white-space: nowrap;
-    }}
-    .progress-row {{ margin-top: 16px; }}
-    .progress-label {{ display: flex; justify-content: space-between; gap: 12px; margin-bottom: 8px; color: #dbeafe; font-weight: 800; }}
-    .progress-label small {{ color: var(--muted); font-weight: 700; }}
-    .meter {{
-      position: relative;
-      height: 16px;
-      overflow: hidden;
-      border-radius: 999px;
-      border: 1px solid rgba(148, 163, 184, 0.16);
-      background: rgba(15, 23, 42, 0.88);
-      box-shadow: inset 0 1px 8px rgba(0,0,0,0.32);
-    }}
-    .meter-fill {{
-      height: 100%;
-      min-width: 8px;
-      border-radius: inherit;
-      box-shadow: 0 0 22px rgba(125, 211, 252, 0.22);
-      animation: fill-meter 780ms cubic-bezier(.2,.8,.2,1) both;
-      transform-origin: left center;
-    }}
-    .meter-fill.level {{ background: linear-gradient(90deg, #38bdf8, #818cf8, #c084fc); }}
-    .meter-fill.fame {{ background: linear-gradient(90deg, #f59e0b, #facc15, #fde68a); box-shadow: 0 0 22px rgba(250, 204, 21, 0.28); }}
-    .sparkline {{ display: grid; grid-auto-flow: column; grid-auto-columns: minmax(7px, 1fr); align-items: end; gap: 4px; height: 78px; margin-top: 16px; padding: 10px; border-radius: 18px; background: rgba(2, 6, 23, 0.34); border: 1px solid rgba(148, 163, 184, 0.12); }}
-    .spark {{
-      min-height: 5px;
-      border-radius: 999px 999px 4px 4px;
-      background: linear-gradient(180deg, rgba(125, 211, 252, 0.96), rgba(52, 211, 153, 0.7));
-      box-shadow: 0 0 18px rgba(45, 212, 191, 0.16);
-      transition: transform 160ms ease, filter 160ms ease;
-    }}
-    .spark:hover {{ transform: scaleY(1.08); filter: brightness(1.2); }}
-    .progress-point {{
-      margin-top: 16px;
-      padding: 14px;
-      border-radius: 18px;
-      background: rgba(15, 23, 42, 0.5);
-      border: 1px solid rgba(148, 163, 184, 0.12);
-    }}
-    .muted {{ color: var(--muted); }}
-    pre {{
-      white-space: pre-wrap;
-      font-family: inherit;
-      line-height: 1.7;
-      margin: 0;
-      color: #e5edf8;
-    }}
-    strong {{ color: #ffffff; }}
-    @keyframes card-rise {{
-      from {{ opacity: 0; transform: translateY(10px); }}
-      to {{ opacity: 1; transform: translateY(0); }}
-    }}
-    @keyframes fill-meter {{
-      from {{ transform: scaleX(0.04); filter: saturate(0.7); }}
-      to {{ transform: scaleX(1); filter: saturate(1); }}
-    }}
-    @keyframes grid-drift {{
-      from {{ background-position: 0 0, 0 0; }}
-      to {{ background-position: 44px 44px, 44px 44px; }}
-    }}
-    @keyframes orb-float {{
-      from {{ transform: translate3d(0, 0, 0) scale(1); opacity: 0.64; }}
-      to {{ transform: translate3d(-34px, -28px, 0) scale(1.12); opacity: 1; }}
-    }}
-    @keyframes sigil-pulse {{
-      0%, 100% {{ box-shadow: 0 0 30px rgba(250, 204, 21, 0.12); }}
-      50% {{ box-shadow: 0 0 38px rgba(125, 211, 252, 0.24), 0 0 14px rgba(250, 204, 21, 0.16); }}
-    }}
-    @media (prefers-reduced-motion: reduce) {{
-      *, *::before, *::after {{ animation-duration: 1ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: 1ms !important; }}
-    }}
-    @media (max-width: 720px) {{
-      .hero {{ padding: 22px 16px 16px; }}
-      main {{ padding: 22px 16px 42px; }}
-      .brand {{ align-items: flex-start; }}
-      nav {{ gap: 8px; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 4px; }}
-      nav a {{ white-space: nowrap; }}
-      .card {{ padding: 18px; border-radius: 18px; }}
-      .grid {{ grid-template-columns: 1fr; }}
-      .profile-hero {{ grid-template-columns: 1fr; padding: 20px; }}
-      .progress-head {{ display: block; }}
-      .delta {{ margin-top: 10px; }}
-      .avatar {{ width: 62px; height: 62px; border-radius: 20px; }}
-    }}
-  </style>
   <link rel="stylesheet" href="/static/dashboard.css">
 </head>
-<body class="selection:bg-sky-300/30 selection:text-white">
-  <header>
-    <div class="hero">
-      <div class="brand">
-        <div class="mark">G</div>
-        <div>
-          <h1 class="bg-gradient-to-r from-sky-100 via-white to-violet-200 bg-clip-text text-transparent">GenialBot</h1>
-          <p class="subtitle">Crónica viva del isekai, personajes, eventos y ranking de poder.</p>
-        </div>
-      </div>
-      <nav>
-        <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/reinos">Reinos</a><a href="/timeline">Timeline</a><a href="/progresion">Progresión</a><a href="/combates">Combates</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/votaciones">Votaciones</a><a href="/comercio">Comercio</a><a href="/novel">Novel</a>
-      </nav>
-    </div>
+<body>
+  <div class="atmosphere" aria-hidden="true"><span></span><span></span><span></span></div>
+  <header class="site-header">
+    <a class="brand-island" href="/" aria-label="Ir al inicio de GenialBot">
+      <span class="brand-mark"><span>G</span></span>
+      <span><strong>GenialBot</strong><small>Archivo vivo del isekai</small></span>
+    </a>
+    <button class="menu-button" type="button" aria-label="Abrir navegación" aria-expanded="false" data-menu-button>
+      <span></span><span></span>
+    </button>
+    <nav class="nav-shell" data-menu-panel>
+      <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/reinos">Reinos</a><a href="/timeline">Timeline</a><a href="/progresion">Progresión</a><a href="/combates">Combates</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/votaciones">Votaciones</a><a href="/comercio">Comercio</a><a href="/novel">Novel</a>
+    </nav>
   </header>
-  <main><div class="rounded-[2rem] border border-white/5 bg-slate-950/20 p-1 shadow-2xl shadow-black/20">{body}</div></main>
+  <section class="hero-panel reveal">
+    <p class="eyebrow">Observatorio narrativo</p>
+    <h1>La crónica respira, pelea y recuerda.</h1>
+    <p class="subtitle">Un archivo premium para leer el mundo, seguir personajes y entender cómo cambia el poder día a día.</p>
+  </section>
+  <main class="archive-shell"><div class="archive-core reveal">{body}</div></main>
+  <script>
+    const menuButton = document.querySelector('[data-menu-button]');
+    const menuPanel = document.querySelector('[data-menu-panel]');
+    menuButton?.addEventListener('click', () => {{
+      const open = document.body.classList.toggle('menu-open');
+      menuButton.setAttribute('aria-expanded', String(open));
+    }});
+    menuPanel?.querySelectorAll('a').forEach((link) => link.addEventListener('click', () => {{
+      document.body.classList.remove('menu-open');
+      menuButton?.setAttribute('aria-expanded', 'false');
+    }}));
+    const observer = new IntersectionObserver((entries) => {{
+      entries.forEach((entry) => {{
+        if (entry.isIntersecting) {{
+          entry.target.classList.add('is-visible');
+          observer.unobserve(entry.target);
+        }}
+      }});
+    }}, {{ threshold: 0.12 }});
+    document.querySelectorAll('.reveal, .card, .info-card, .profile-hero, .section-heading').forEach((node) => observer.observe(node));
+  </script>
 </body>
 </html>""")
 
