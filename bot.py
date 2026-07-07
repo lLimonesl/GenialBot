@@ -932,6 +932,7 @@ async def resetear_mundo(ctx):
         "• Votaciones borradas\n"
         "• Inventario, fama, NPCs, combates y arcos borrados\n"
         "• Leyendas enemigas y progresión histórica borradas\n"
+        "• Memoria IA, hechos, relaciones y snapshots borrados\n"
         "• Personajes restaurados a vivos, nivel 1 y sin ubicación actual\n"
         "Las reglas del mundo volvieron a su estado base."
     )

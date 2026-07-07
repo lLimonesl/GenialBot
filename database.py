@@ -1479,7 +1479,12 @@ async def reset_world_progress():
                 key_events,
                 trade_logs,
                 legends,
-                character_progression
+                character_progression,
+                prompt_snapshots,
+                ai_runs,
+                story_facts,
+                entity_relationships,
+                memory_chunks
             RESTART IDENTITY CASCADE
         """)
 
