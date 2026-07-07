@@ -24,7 +24,6 @@ from database import (
     get_quotes,
     get_recent_trades,
     get_timeline_events,
-    get_votes,
 )
 
 
@@ -117,6 +116,10 @@ def section_heading(title, subtitle=""):
     return f"<div class='section-heading'><h3>{html.escape(title)}</h3>{subtitle_html}</div>"
 
 
+def empty_card(message):
+    return f"<div class='card empty'>{html.escape(message)}</div>"
+
+
 def list_value(value):
     if value is None:
         return []
@@ -149,14 +152,9 @@ def page(title, body):
       <span></span><span></span>
     </button>
     <nav class="nav-shell" data-menu-panel>
-      <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/reinos">Reinos</a><a href="/timeline">Timeline</a><a href="/progresion">Progresión</a><a href="/combates">Combates</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/votaciones">Votaciones</a><a href="/comercio">Comercio</a><a href="/novel">Novel</a>
+      <a href="/">Inicio</a><a href="/historia">Historia</a><a href="/personajes">Personajes</a><a href="/ranking">Ranking</a><a href="/mapa">Mapa</a><a href="/reinos">Reinos</a><a href="/timeline">Timeline</a><a href="/progresion">Progresión</a><a href="/combates">Combates</a><a href="/arcos">Arcos</a><a href="/npcs">NPCs</a><a href="/citas">Citas</a><a href="/eventos">Eventos</a><a href="/comercio">Comercio</a><a href="/novel">Novel</a>
     </nav>
   </header>
-  <section class="hero-panel reveal">
-    <p class="eyebrow">Observatorio narrativo</p>
-    <h1>La crónica respira, pelea y recuerda.</h1>
-    <p class="subtitle">Un archivo premium para leer el mundo, seguir personajes y entender cómo cambia el poder día a día.</p>
-  </section>
   <main class="archive-shell"><div class="archive-core reveal">{body}</div></main>
   <script>
     const menuButton = document.querySelector('[data-menu-button]');
@@ -205,6 +203,8 @@ async def history():
     for day in days:
         title = day["title"] or f"Día {day['day']}"
         body += f"<a class='card card-link' href='/historia/{day['day']}'><span class='title'>{html.escape(title)}</span><p class='muted'>{html.escape(day['summary'] or '')}</p><span class='pill'>Leer día {day['day']}</span></a>"
+    if not days:
+        body += empty_card("Todavía no hay capítulos generados.")
     body += "</div></section>"
     return page("Historia", body)
 
@@ -231,6 +231,8 @@ async def characters():
         status = html.escape(row["status"])
         path_name = quote(row["name"], safe="")
         body += f"<a class='card card-link compact' href='/personajes/{path_name}'><span class='title'>{name}</span><div class='meta'><span class='pill'>{race}</span><span class='pill'>Nivel {row['level']}</span><span class='pill'>{status}</span></div></a>"
+    if not rows:
+        body += empty_card("No hay personajes registrados todavía.")
     body += "</div></section>"
     return page("Personajes", body)
 
@@ -291,6 +293,8 @@ async def map_page():
     body = "<h2>Mapa actual</h2><div class='grid'>"
     for row in rows:
         body += f"<div class='card compact'><span class='title'>{html.escape(row['name'])}</span><div class='meta'><span class='pill'>{html.escape(row['race'])}</span><span class='pill'>{html.escape(row['current_kingdom'] or 'Ubicación desconocida')}</span></div></div>"
+    if not rows:
+        body += empty_card("No hay ubicaciones registradas todavía.")
     body += "</div>"
     return page("Mapa", body)
 
@@ -343,6 +347,8 @@ async def kingdom_detail_page(kingdom: str):
 async def timeline_page():
     rows = await get_timeline_events(limit=250)
     body = "<section class='p-5 sm:p-7'><p class='mb-2 text-sm font-bold uppercase tracking-[0.25em] text-violet-300/80'>Cronología</p><h2>Línea de tiempo</h2>"
+    if not rows:
+        body += empty_card("La línea de tiempo se llenará cuando existan eventos registrados.")
     current_day = None
     for row in rows:
         if row["day"] != current_day:
@@ -424,6 +430,8 @@ async def battles_page():
     body = "<section class='p-5 sm:p-7'><p class='mb-2 text-sm font-bold uppercase tracking-[0.25em] text-red-300/80'>Registro bélico</p><h2>Combates</h2><div class='grid'>"
     for row in rows:
         body += f"<a class='card card-link' href='/combates/{row['id']}'><span class='title'>{html.escape(row['outcome'] or 'Combate')}</span><p class='muted'>{html.escape(row['summary'] or '')}</p><span class='pill'>Día {row['day']}</span></a>"
+    if not rows:
+        body += empty_card("No hay combates registrados.")
     body += "</div></section>"
     return page("Combates", body)
 
@@ -452,6 +460,8 @@ async def arcs_page():
     body = "<h2>Arcos activos</h2><div class='grid'>"
     for row in rows:
         body += f"<div class='card compact'><span class='title'>{html.escape(row['arc_name'])}</span><p class='muted'>{html.escape(row['name'])}</p><span class='pill'>Progreso {row['arc_progress']}%</span></div>"
+    if not rows:
+        body += empty_card("No hay arcos activos registrados.")
     body += "</div>"
     return page("Arcos", body)
 
@@ -462,6 +472,8 @@ async def npcs_page():
     body = "<h2>NPCs activos</h2><div class='grid'>"
     for row in rows:
         body += f"<div class='card compact'><span class='title'>{html.escape(row['name'])}</span><div class='meta'><span class='pill'>{html.escape(row['role'] or 'sin rol')}</span><span class='pill'>{html.escape(row['kingdom'] or 'desconocido')}</span></div></div>"
+    if not rows:
+        body += empty_card("No hay NPCs activos por ahora.")
     body += "</div>"
     return page("NPCs", body)
 
@@ -472,6 +484,8 @@ async def quotes_page():
     body = "<h2>Citas memorables</h2>"
     for row in rows:
         body += f"<div class='card'><p class='quote'>\"{html.escape(row['quote'])}\"</p><div class='meta'><span class='pill'>Día {row['day']}</span><span class='pill'>{html.escape(row['character_name'] or 'Desconocido')}</span></div></div>"
+    if not rows:
+        body += empty_card("Aún no hay citas memorables registradas.")
     return page("Citas", body)
 
 
@@ -482,6 +496,8 @@ async def ranking_page():
     for i, row in enumerate(rows, start=1):
         medal = "Campeón" if i == 1 else f"Puesto {i}"
         body += f"<div class='card compact'><span class='title'>{i}. {html.escape(row['name'])}</span><div class='meta'><span class='pill'>{medal}</span><span class='pill'>Nivel {row['level']}</span><span class='pill'>Fama {row['total_fame']}</span><span class='pill'>Victorias {row['wins']}</span></div></div>"
+    if not rows:
+        body += empty_card("El ranking aparecerá cuando haya personajes con estadísticas.")
     body += "</div></section>"
     return page("Ranking", body)
 
@@ -492,18 +508,9 @@ async def events_page():
     body = "<h2>Eventos clave</h2>"
     for row in rows:
         body += f"<div class='card'><span class='title'>{html.escape(row['title'] or 'Evento')}</span><p>{html.escape(row['description'])}</p><div class='meta'><span class='pill'>Día {row['day']}</span><span class='pill'>{html.escape(row['event_type'])}</span></div></div>"
+    if not rows:
+        body += empty_card("No hay eventos clave activos.")
     return page("Eventos", body)
-
-
-@app.get("/votaciones", response_class=HTMLResponse)
-async def votes_page():
-    rows = await get_votes(limit=50)
-    body = "<h2>Votaciones</h2>"
-    for row in rows:
-        result = row["result"] or "sin resultado"
-        consequence = row["consequence"] or "sin consecuencia"
-        body += f"<div class='card'><span class='title'>#{row['id']} - {html.escape(row['question'] or 'Votación')}</span><div class='meta'><span class='pill'>Día {row['day']}</span><span class='pill'>{html.escape(row['status'] or 'sin estado')}</span><span class='pill'>{html.escape(row['vote_type'] or 'critical')}</span><span class='pill'>Resultado: {html.escape(result)}</span></div><p class='muted'>Consecuencia: {html.escape(consequence)}</p></div>"
-    return page("Votaciones", body)
 
 
 @app.get("/comercio", response_class=HTMLResponse)
@@ -513,6 +520,8 @@ async def commerce_page():
     for row in rows:
         origin = row["origin_kingdom"] or "origen desconocido"
         body += f"<div class='card compact'><span class='title'>{html.escape(row['item_name'])}</span><p class='muted'>{html.escape(row['character_name'] or 'Desconocido')} movió este objeto.</p><div class='meta'><span class='pill'>Día {row['day']}</span><span class='pill'>Desde: {html.escape(origin)}</span><span class='pill'>Hacia: {html.escape(row['destination_kingdom'])}</span></div></div>"
+    if not rows:
+        body += empty_card("No hay movimientos de comercio recientes.")
     return page("Comercio", body)
 
 
@@ -523,4 +532,6 @@ async def novel_page():
     for day in days:
         title = day["title"] or f"Día {day['day']}"
         body += f"<section class='card'><h3>{html.escape(title)}</h3><div class='meta'><span class='pill'>Día {day['day']}</span><span class='pill'>Clima: {html.escape(day['weather'] or 'No registrado')}</span></div><pre>{html.escape(day['full_text'] or day['summary'] or '')}</pre></section>"
+    if not days:
+        body += empty_card("La web novel aparecerá cuando existan días generados.")
     return page("Web Novel", body)
